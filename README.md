@@ -1,30 +1,24 @@
 # CodeSuture
 
-> Runtime Python bytecode patcher. Catches crashes, synthesizes guards, rewrites functions in-memory, and persists fixes across runs.
+**Runtime guard synthesis for CPython. Catches structural crashes, patches live bytecode, keeps your server running.**
+
+```
+pip install codesuture
+```
 
 ---
 
 ## What it does
 
-CodeSuture sits between your Python program and its crashes. When an exception occurs, it intercepts the failing frame, disassembles the bytecode to identify the root cause, injects a deterministic guard directly into the function's code object, and retries execution — all without touching a single source file.
+When a Python program crashes, CodeSuture intercepts the exception at the exact bytecode instruction, disassembles the failing function, injects a deterministic guard into its code object in memory, and retries — without touching a single source file.
 
-The fix persists. On subsequent runs, CodeSuture loads the patched bytecode before the first function call. The crash is gone until you choose to remove the patch.
+The patch persists. Next run, it loads before the first function call.
 
-It is a surgical tool for keeping programs running when structural failures — null access, missing keys, type mismatches, out-of-bounds reads — would otherwise bring them down.
-
----
-
-## Installation
-
-```bash
-pip install codesuture
-```
-
-Python 3.11+ required.
+On a live HTTP server, CodeSuture patches the handler mid-request and replays the transaction. The client receives a 200. No restart. No traceback leak.
 
 ---
 
-## Quick start
+## Quick start — script
 
 ```bash
 codesuture run your_script.py
@@ -44,21 +38,51 @@ Run it again:
 
 ```
 [CodeSuture] Already healed, skipping: loaded persistent patch for get_bio
-[CodeSuture] Session summary:
+Session summary:
   Patches applied: 0
 ```
 
 ---
 
+## Quick start — live server
+
+```bash
+codesuture run server.py --verbose --retries 3
+```
+
+```
+[CodeSuture] Caught AttributeError: 'NoneType' object has no attribute 'get_profile'
+[CodeSuture] Applying null_guard on 'get_profile' ...
+[CodeSuture DEBUG] Diff: +12 -9 instructions (allowed <= 55)
+[CodeSuture] Patch applied to do_GET().
+[CodeSuture] Transaction replay armed for do_GET().
+[CodeSuture] Transaction replay: retrying patched HTTP handler in-place.
+127.0.0.1 - - "GET /user-data HTTP/1.1" 200 -
+```
+
+The client sees:
+
+```http
+HTTP/1.0 200 OK
+Content-type: application/json
+X-CodeSuture: patched=1; guard=null_guard; target=get_profile
+
+{"result": null}
+```
+
+No 500. No traceback. Server process intact.
+
+---
+
 ## How it works
 
-1. **Catch** — A `sys.settrace` callback intercepts exceptions at the exact frame and bytecode offset where they occur.
-2. **Analyze** — The pattern matcher disassembles the function's bytecode, walks the instruction chain, and identifies the failing variable or operation.
-3. **Patch** — The guard synthesizer injects new bytecode instructions into the function's code object in memory. A semantic diff gate rejects patches that would change too much of the function's logic.
-4. **Rewind** — Execution restarts from the patched function. The guard prevents the crash from recurring.
-5. **Persist** — The patched code object is serialized to `.codesuture_store/` with JSON metadata. On subsequent runs it loads before execution begins.
+1. **Catch** — `sys.settrace` intercepts exceptions at the exact frame and bytecode offset.
+2. **Analyze** — The pattern matcher walks the instruction chain and identifies the failing variable or operation.
+3. **Patch** — The guard synthesizer injects new bytecode into the function's code object. A semantic diff gate rejects patches that change too much logic.
+4. **Rewind** — Execution restarts from the patched function. The guard prevents recurrence.
+5. **Persist** — The patched code object is serialized to `.codesuture_store/` with JSON metadata. Subsequent runs load it before the first call.
 
-No source files are modified at any point.
+No source files are modified.
 
 ---
 
@@ -67,10 +91,10 @@ No source files are modified at any point.
 | Guard type | Triggers on | Example |
 |---|---|---|
 | `null_guard` | `AttributeError` on `None` | `user.profile.bio` when `profile` is `None` |
-| `index_guard` | `IndexError` | `items[10]` when `len(items) == 2` |
 | `key_guard` | `KeyError` | `cfg["timeout"]` when key is missing |
 | `subscript_guard` | `TypeError` subscripting `None` | `data["key"]` when `data` is `None` |
 | `chain_subscript_guard` | Nested subscript on `None` | `data["user"]["name"]` |
+| `index_guard` | `IndexError` | `items[10]` when `len(items) == 2` |
 | `type_coercion_guard` | `TypeError` on conversion | `int("not_a_number")` |
 | `division_guard` | `ZeroDivisionError` | `x / count` when `count == 0` |
 | `str_coerce_guard` | `TypeError` on string concat | `"age: " + 25` |
@@ -83,37 +107,66 @@ No source files are modified at any point.
 
 | Command | Flags | What it does |
 |---|---|---|
-| `codesuture run <script>` | | Run script with live patching enabled |
+| `codesuture run <script>` | | Run with live patching |
 | `codesuture run <script>` | `--verbose` | Show patch diffs and instruction deltas |
 | `codesuture run <script>` | `--shadow` | Warn when patched functions return sentinel values |
-| `codesuture run <script>` | `--dry-run` | Preview what would be patched without applying |
-| `codesuture run <script>` | `--ttl DAYS` | Set patch expiry in days (default: 7) |
-| `codesuture run <script>` | `--retries N` | Max re-execution attempts per crash (default: 3) |
+| `codesuture run <script>` | `--dry-run` | Preview patches without applying |
+| `codesuture run <script>` | `--ttl DAYS` | Set patch expiry (default: 7 days) |
+| `codesuture run <script>` | `--retries N` | Max re-execution attempts (default: 3) |
 | `codesuture watch <script>` | `--max-restarts N` | Run continuously, restart after each patch |
-| `codesuture audit` | | Show all active patches in a formatted table |
-| `codesuture explain` | | Human-readable breakdown of what each patch changed |
+| `codesuture audit` | | Show all active patches in a table |
+| `codesuture explain` | | Plain-language breakdown of every patch |
 | `codesuture explain <name>` | | Explain one function's patch |
 | `codesuture rollback <name>` | | Remove one persisted patch |
-| `codesuture rollback` | `--all` | Remove all patches and the fingerprint registry |
+| `codesuture rollback` | `--all` | Remove all patches and fingerprint registry |
 | `codesuture rollback` | `--dry-run` | Preview what would be removed |
+
+---
+
+## HTTP recovery
+
+CodeSuture patches exceptions inside `http.server` and `socketserver` request handlers. The handler runs in its own thread — CodeSuture installs `threading.settrace` to intercept crashes there.
+
+When a handler crashes and a guard is available, CodeSuture patches the function mid-request and replays the transaction in-place. The client receives a response instead of a socket close.
+
+Every patched response carries:
+
+```
+X-CodeSuture: patched=1; guard=<type>; target=<variable>
+```
+
+Four crash types, one server, all returning 200:
+
+```
+"GET /user-data HTTP/1.1"       200  ← null_guard on None object
+"GET /config HTTP/1.1"          200  ← key_guard on missing key
+"GET /process-payment HTTP/1.1" 200  ← type_coercion_guard on bad input
+"GET /latest-user HTTP/1.1"     200  ← chain_subscript_guard on out-of-bounds
+```
+
+### WSGI middleware
+
+```python
+from codesuture.middleware import CodeSutureMiddleware
+
+app = CodeSutureMiddleware(wsgi_app)
+```
 
 ---
 
 ## Runtime Intelligence
 
-Beyond basic patching, CodeSuture includes a set of higher-order behaviors that make it safe to use in real codebases:
+**Semantic diff gate** — Patches that modify too many instructions for the guard type are automatically rejected. The engine never corrupts a complex function to patch a simple crash.
 
-**Semantic diff gate** — Patches that would modify too many instructions relative to the guard type are automatically rejected. The engine will never corrupt a complex function to patch a simple crash.
+**Caller-aware propagation** — After patching, CodeSuture uses `gc.get_referrers` to update every live reference to the original code object: closures, bound methods, partials. No stale copy survives.
 
-**Caller-aware propagation** — After patching a function, CodeSuture uses `gc.get_referrers` to find every live reference to the original code object — closures, bound methods, partials — and updates them all. No in-memory copy of the broken function survives.
+**Shadow execution mode** — `--shadow` monitors return values of patched functions. If a sentinel default leaks into downstream logic, a warning fires before it causes a second failure.
 
-**Shadow execution mode** — `--shadow` monitors the return value of patched functions. If a sentinel default (`""`, `0`, `None`) leaks into downstream logic, CodeSuture logs a warning before it causes a second failure.
+**Patch expiry** — Every persisted patch carries a TTL. When it ages past the limit, CodeSuture logs a reminder to fix the root cause in source. Patches are scaffolding, not permanent fixes.
 
-**Patch expiry** — Every persisted patch carries a configurable TTL. When a patch ages past its limit, CodeSuture logs a reminder that the underlying bug should be addressed in source code. Patches are scaffolding, not permanent fixes.
+**Bytecode fingerprint registry** — Crash sites are hashed by their surrounding instruction window. Repeat patterns get instant cached guard application without re-analysis.
 
-**Bytecode fingerprint registry** — Crash sites are hashed by their surrounding instruction window. When the same crash pattern appears again, CodeSuture applies the known guard directly without re-running analysis.
-
-**Audit trail** — `codesuture audit` displays every active patch: function name, guard type, target variable, default value, age, and rollback instructions. `codesuture explain` gives a plain-language breakdown of exactly what each patch changed and whether the default value is safe for downstream consumers.
+**Audit trail** — `codesuture audit` shows every active patch: function, guard type, target, default value, age. `codesuture explain` gives a plain-language breakdown of what changed and whether the default is safe downstream.
 
 ---
 
@@ -121,26 +174,40 @@ Beyond basic patching, CodeSuture includes a set of higher-order behaviors that 
 
 **Not a logger.** It does not record exceptions and move on. It patches the function and retries.
 
-**Not a fuzzer or static analyzer.** It operates at runtime on live bytecode, not on source.
+**Not a static analyzer.** It operates at runtime on live bytecode, not on source.
 
-**Not autonomous.** Patches should be reviewed via `codesuture audit` and `codesuture explain`. The goal is to keep your program running while you address the root cause — not to replace the fix.
+**Not autonomous.** Patches should be reviewed via `codesuture audit` and `codesuture explain`. The goal is to keep your program running while you fix the root cause — not to replace the fix.
 
 ---
 
 ## Limitations
 
-**Python 3.11+ only.** CodeSuture depends on bytecode structures introduced in CPython 3.11. Earlier versions are not supported.
+**Python 3.11+ only.** CodeSuture depends on CPython 3.11 bytecode structures.
 
-**List and dict comprehensions are not patchable.** Comprehensions are implemented as anonymous nested code objects in CPython. CodeSuture detects crashes inside them and logs a warning, but does not attempt to patch them. Refactor the comprehension into a named function to enable patching.
+**Comprehensions are not patchable.** List, dict, set, and generator comprehensions are anonymous nested code objects. CodeSuture logs a warning and skips them. Refactor into a named function to enable patching.
 
-**Semantic bugs are not patchable.** CodeSuture fixes structural crashes — null access, missing keys, type mismatches, bounds errors. It cannot fix logic errors where the code runs but produces wrong results.
+**Semantic bugs are not patchable.** CodeSuture fixes structural crashes — null access, missing keys, type mismatches, bounds errors. Logic errors that produce wrong results without crashing are out of scope.
 
-**Single-process scope.** Patches apply per-process. Multi-process applications need a CodeSuture instance per worker. The `.codesuture_store/` directory is shared on disk, so patches load correctly on restart.
+**Single-process scope.** Patches apply per-process. Multi-process applications need one instance per worker. `.codesuture_store/` is shared on disk, so patches load correctly on restart.
 
-**Async support is experimental.** `async def` functions with standard `CO_COROUTINE` frames are patched. Async generators and deeply nested `await` chains may not be handled correctly in all cases.
+**Async support is experimental.** Standard `async def` functions are patched. Async generators and deeply nested `await` chains may not be handled correctly in all cases.
+
+**HTTP recovery covers simple server paths.** Validated against `http.server` and `socketserver`. Full ASGI framework support is in progress.
+
+---
+
+## Roadmap
+
+Tracked in `ROADMAP.md`. v1.0 themes:
+
+- `sys.monitoring` as the default engine on Python 3.12+ (zero line-tracing overhead on hot paths)
+- Stronger transaction recovery boundaries across web frameworks
+- Verified source-level repair proposals via local LLM
+- Fleet governance, audit lifecycle, and incident export
+- Language-neutral incident protocol for future polyglot adapters
 
 ---
 
 ## License
 
-MIT. See [LICENSE](LICENSE) for details.
+MIT. See `LICENSE` for details.

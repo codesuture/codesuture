@@ -42,6 +42,46 @@ def test_type_coercion_guard_synthesis():
     assert new_func("123") == 246
     assert new_func("not_a_number") == 0
 
+def test_key_guard_targets_matching_nested_key():
+    def original(state):
+        return state["config"]["retry_limit"]
+
+    spec = PatchSpec('key_guard', 'state', None, key_name='retry_limit')
+    new_bc = synthesize_guarded_code(original.__code__, spec)
+    new_code = new_bc.to_code()
+    new_func = types.FunctionType(new_code, {})
+
+    assert new_func({"config": {"retry_limit": 3}}) == 3
+    assert new_func({"config": {}}) is None
+
+def test_type_coercion_guard_after_branch_local_assignment():
+    def original(path):
+        if path == "pay":
+            user_input = "not_a_number"
+            return int(user_input)
+        return "ok"
+
+    spec = PatchSpec('type_coercion_guard', 'user_input', 0)
+    new_bc = synthesize_guarded_code(original.__code__, spec)
+    new_code = new_bc.to_code()
+    new_func = types.FunctionType(new_code, {'int': int, 'isinstance': isinstance, 'str': str})
+
+    assert new_func("other") == "ok"
+    assert new_func("pay") == 0
+
+def test_chain_subscript_guard_handles_global_list_index():
+    state = {"active_users": ["admin"]}
+
+    def original():
+        return STATE["active_users"][10]
+
+    spec = PatchSpec('chain_subscript_guard', 'STATE', None, key_name=('active_users', 10))
+    new_bc = synthesize_guarded_code(original.__code__, spec)
+    new_code = new_bc.to_code()
+    new_func = types.FunctionType(new_code, {'STATE': state, 'len': len})
+
+    assert new_func() is None
+
 def test_file_not_found_guard_synthesis():
     import os
     def original(path):

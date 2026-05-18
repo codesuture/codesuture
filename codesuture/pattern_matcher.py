@@ -497,6 +497,27 @@ def _index_bound_spec(frame):
     if tgt is None or tgt.opname != 'BINARY_SUBSCR':
         return None
     idx_instr = instructions.index(tgt)
+    if idx_instr > 0 and instructions[idx_instr - 1].opname == 'LOAD_CONST':
+        chain = []
+        pos = idx_instr
+        while pos >= 2 and instructions[pos].opname == 'BINARY_SUBSCR':
+            key_instr = instructions[pos - 1]
+            if key_instr.opname not in ('LOAD_CONST', 'LOAD_FAST'):
+                break
+            chain.insert(0, key_instr.argval)
+            pos -= 2
+        root = instructions[pos] if 0 <= pos < len(instructions) else None
+        if root is not None and root.opname in ('LOAD_FAST', 'LOAD_GLOBAL') and len(chain) >= 2:
+            root_var = root.argval
+            if isinstance(root_var, tuple):
+                root_var = root_var[-1]
+            return PatchSpec(
+                'chain_subscript_guard',
+                root_var,
+                _infer_subscript_default(instructions, idx_instr),
+                key_name=tuple(chain),
+            )
+
     loads = []
     for i in range(idx_instr-1, -1, -1):
         if instructions[i].opname in ('LOAD_FAST', 'LOAD_DEREF'):
@@ -504,7 +525,29 @@ def _index_bound_spec(frame):
             if len(loads) == 2:
                 break
     if len(loads) < 2:
-        return None
+        chain = []
+        pos = idx_instr
+        while pos >= 2 and instructions[pos].opname == 'BINARY_SUBSCR':
+            key_instr = instructions[pos - 1]
+            if key_instr.opname not in ('LOAD_CONST', 'LOAD_FAST'):
+                return None
+            key = key_instr.argval
+            chain.insert(0, key)
+            pos -= 2
+        root = instructions[pos] if 0 <= pos < len(instructions) else None
+        if root is None or root.opname not in ('LOAD_FAST', 'LOAD_GLOBAL'):
+            return None
+        root_var = root.argval
+        if isinstance(root_var, tuple):
+            root_var = root_var[-1]
+        if len(chain) < 2:
+            return None
+        return PatchSpec(
+            'chain_subscript_guard',
+            root_var,
+            _infer_subscript_default(instructions, idx_instr),
+            key_name=tuple(chain),
+        )
     list_var, idx_var = loads[1], loads[0]
     return PatchSpec('index_guard', idx_var, 0, list_len_var=list_var)
 

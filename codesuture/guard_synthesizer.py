@@ -1,8 +1,29 @@
 """
 Synthesises guard + original bytecode for all deterministic strategies.
 """
+import ctypes
 from bytecode import Bytecode, Instr, Label, Compare
 from codesuture.pattern_matcher import PatchSpec
+
+def _force_despecialize(func):
+    """
+    Force CPython 3.11+ to abandon its adaptive
+    instruction cache for this function.
+    After __code__ replacement, the interpreter must
+    re-read the new bytecode from scratch.
+    """
+    try:
+        # PyFunction_SetCode forces de-specialization
+        # by going through the official C API path
+        # rather than the Python attribute setter.
+        ctypes.pythonapi.PyFunction_SetCode(
+            ctypes.py_object(func),
+            ctypes.py_object(func.__code__)
+        )
+    except Exception:
+        pass  # Non-fatal: patch still applied, may not
+              # take effect until next function cold-start
+
 
 class PatchValidationError(Exception):
     pass
@@ -51,21 +72,89 @@ def propagate_patch(original_func, patched_code) -> int:
         if hasattr(ref, '__func__') and hasattr(ref.__func__, '__code__'):
             if ref.__func__.__code__ is original_code:
                 ref.__func__.__code__ = patched_code
+                _force_despecialize(ref.__func__)
                 propagated += 1
 
         elif hasattr(ref, '__code__') and ref.__code__ is original_code:
             ref.__code__ = patched_code
+            _force_despecialize(ref)
             propagated += 1
 
     original_func.__code__ = patched_code
+    _force_despecialize(original_func)
 
     if propagated > 0:
         print(f"[CodeSuture] Propagated patch to {propagated} additional "
               f"live reference(s) of {original_func.__qualname__}.")
     return propagated
 
+def _is_inside_try_block(code):
+    """Return True if any BINARY_SUBSCR or crash-relevant opcode
+       falls inside an exception handler range (TryBegin/TryEnd).
+       Uses the bytecode library's TryBegin/TryEnd markers."""
+    import sys
+    if sys.version_info < (3, 11):
+        return False
+    try:
+        from bytecode import TryBegin, TryEnd
+        bc = Bytecode.from_code(code)
+        depth = 0
+        has_subscr_in_try = False
+        for item in bc:
+            if isinstance(item, TryBegin):
+                depth += 1
+            elif isinstance(item, TryEnd):
+                depth = max(0, depth - 1)
+            elif depth > 0 and isinstance(item, Instr):
+                if item.name in ('BINARY_SUBSCR', 'LOAD_ATTR', 'LOAD_METHOD',
+                                 'BINARY_OP', 'BINARY_TRUE_DIVIDE'):
+                    has_subscr_in_try = True
+                    break
+        return has_subscr_in_try
+    except Exception:
+        return False
+
+def _build_entry_point_null_guard(original_code, var_name, default):
+    """Build a guard injected at the function entry point (after RESUME).
+       Checks if var_name is None and replaces it with default.
+       Safe for use when the crash site is inside a try block."""
+    bc = Bytecode.from_code(original_code)
+    skip = Label()
+    patch = [
+        Instr('LOAD_FAST', var_name),
+        Instr('LOAD_CONST', None),
+        Instr('IS_OP', 0),
+        Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+        Instr('LOAD_CONST', default),
+        Instr('RETURN_VALUE'),
+        skip
+    ]
+    idx = 0
+    for i, instr in enumerate(bc):
+        if isinstance(instr, Instr) and instr.name == 'RESUME':
+            idx = i + 1
+            break
+    for instr in reversed(patch):
+        bc.insert(idx, instr)
+    return bc
+
+# Strategies that inject inline at the crash site (replace BINARY_SUBSCR etc.)
+# These are the ones that can corrupt exception tables when inside try blocks.
+_INLINE_STRATEGIES = frozenset({
+})
+
 def synthesize_guarded_code(original_code, spec: PatchSpec) -> Bytecode:
-    if spec.strategy in ('subscript_guard', 'key_guard', 'dict_get_guard'):
+    # Bug 3 fix: If the crash site is inside a try/except block and we
+    # would normally inject inline, redirect to an entry-point guard
+    # to avoid corrupting co_exceptiontable offsets on CPython 3.11+.
+    if spec.strategy in _INLINE_STRATEGIES and _is_inside_try_block(original_code):
+        import logging
+        logging.getLogger(__name__).debug(
+            "[CodeSuture] Crash inside try block — redirecting %s to entry-point guard",
+            spec.strategy
+        )
+        res = _build_entry_point_null_guard(original_code, spec.var_name, spec.default_value)
+    elif spec.strategy in ('subscript_guard', 'key_guard', 'dict_get_guard'):
         res = _build_subscript_guarded_code(original_code, spec.var_name, spec.key_name, spec.default_value)
     elif spec.strategy == 'chain_subscript_guard':
         res = _build_chain_subscript_guarded_code(original_code, spec.var_name, spec.key_name, spec.default_value)
@@ -311,10 +400,19 @@ def _build_division_guarded_code(original_code, var_name, default):
 
 def _build_subscript_guarded_code(original_code, container_var, key_name_or_var, default):
     bc = Bytecode.from_code(original_code)
+    instrs = list(bc)
     new_instrs = []
     replaced_count = 0
-    for instr in bc:
-        if isinstance(instr, Instr) and instr.name == 'BINARY_SUBSCR' and replaced_count == 0:
+    for pos, instr in enumerate(instrs):
+        key_matches = True
+        if key_name_or_var is not None:
+            prev = instrs[pos - 1] if pos > 0 else None
+            key_matches = (
+                isinstance(prev, Instr) and
+                ((prev.name == 'LOAD_CONST' and prev.arg == key_name_or_var) or
+                 (prev.name == 'LOAD_FAST' and prev.arg == key_name_or_var))
+            )
+        if isinstance(instr, Instr) and instr.name == 'BINARY_SUBSCR' and replaced_count == 0 and key_matches:
             skip_none = Label()
             end = Label()
             new_instrs.append(Instr('STORE_FAST', '_codesuture_key'))
@@ -354,7 +452,7 @@ def _build_chain_subscript_guarded_code(original_code, root_var, keys, default):
     replaced_count = 0
     while i < len(instrs):
         if _match_chain(instrs, i, root_var, keys):
-            new_instrs.extend(_gen_chain_get(root_var, keys, default))
+            new_instrs.extend(_gen_chain_get(original_code, root_var, keys, default))
             i += pattern_len
             replaced_count += 1
             continue
@@ -367,13 +465,23 @@ def _build_chain_subscript_guarded_code(original_code, root_var, keys, default):
     bc.extend(new_instrs)
     return bc
 
+def _global_name(arg):
+    if isinstance(arg, tuple):
+        return arg[1] if len(arg) > 1 else arg[0]
+    return arg
+
+
 def _match_chain(instrs, start, root_var, keys):
 
     pos = start
     if pos >= len(instrs):
         return False
     i0 = instrs[pos]
-    if not (isinstance(i0, Instr) and i0.name == 'LOAD_FAST' and i0.arg == root_var):
+    if not (
+        isinstance(i0, Instr) and
+        ((i0.name == 'LOAD_FAST' and i0.arg == root_var) or
+         (i0.name == 'LOAD_GLOBAL' and _global_name(i0.arg) == root_var))
+    ):
         return False
     pos += 1
     for key in keys:
@@ -392,10 +500,13 @@ def _match_chain(instrs, start, root_var, keys):
         pos += 1
     return True
 
-def _gen_chain_get(root_var, keys, default):
+def _gen_chain_get(original_code, root_var, keys, default):
 
     out = []
-    out.append(Instr('LOAD_FAST', root_var))
+    if root_var in original_code.co_varnames:
+        out.append(Instr('LOAD_FAST', root_var))
+    else:
+        out.append(Instr('LOAD_GLOBAL', (False, root_var)))
     out.append(Instr('STORE_FAST', '_lp_chain'))
 
     for key in keys[:-1]:
@@ -420,12 +531,30 @@ def _gen_chain_get(root_var, keys, default):
     out.append(Instr('LOAD_CONST', None))
     out.append(Instr('COMPARE_OP', Compare.EQ))
     out.append(Instr('POP_JUMP_FORWARD_IF_TRUE', skip_last))
-    out.append(Instr('LOAD_FAST', '_lp_chain'))
-    out.append(Instr('LOAD_METHOD', 'get'))
-    out.append(Instr('LOAD_CONST', last))
-    out.append(Instr('LOAD_CONST', default))
-    out.append(Instr('PRECALL', 2))
-    out.append(Instr('CALL', 2))
+    if isinstance(last, int):
+        default_last = Label()
+        load_last = Label()
+        out.append(Instr('LOAD_CONST', last))
+        out.append(Instr('LOAD_GLOBAL', (True, 'len')))
+        out.append(Instr('LOAD_FAST', '_lp_chain'))
+        out.append(Instr('PRECALL', 1))
+        out.append(Instr('CALL', 1))
+        out.append(Instr('COMPARE_OP', Compare.GE))
+        out.append(Instr('POP_JUMP_FORWARD_IF_TRUE', default_last))
+        out.append(load_last)
+        out.append(Instr('LOAD_FAST', '_lp_chain'))
+        out.append(Instr('LOAD_CONST', last))
+        out.append(Instr('BINARY_SUBSCR'))
+        out.append(Instr('JUMP_FORWARD', end))
+        out.append(default_last)
+        out.append(Instr('LOAD_CONST', default))
+    else:
+        out.append(Instr('LOAD_FAST', '_lp_chain'))
+        out.append(Instr('LOAD_METHOD', 'get'))
+        out.append(Instr('LOAD_CONST', last))
+        out.append(Instr('LOAD_CONST', default))
+        out.append(Instr('PRECALL', 2))
+        out.append(Instr('CALL', 2))
     out.append(Instr('JUMP_FORWARD', end))
     out.append(skip_last)
     out.append(Instr('LOAD_CONST', default))
@@ -594,9 +723,14 @@ def _build_type_coercion_guarded_code(original_code, var_name, default):
 
     idx = 0
     for i, instr in enumerate(bc):
-        if isinstance(instr, Instr) and instr.name == 'RESUME':
+        if isinstance(instr, Instr) and instr.name == 'STORE_FAST' and instr.arg == var_name:
             idx = i + 1
             break
+    else:
+        for i, instr in enumerate(bc):
+            if isinstance(instr, Instr) and instr.name == 'RESUME':
+                idx = i + 1
+                break
     for instr in reversed(patch):
         bc.insert(idx, instr)
     return bc

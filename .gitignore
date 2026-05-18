@@ -1,32 +1,14 @@
-# Python
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
 .venv/
+env/
 venv/
 *.egg-info/
 dist/
 build/
-.pytest_cache/
-.coverage
-htmlcov/
-
-# CodeSuture specific
+.livepatch_cache/
 .codesuture_cache/
-.codesuture_store/
-.codesuture_knowledge/
-.codesuture_fingerprints
 .models/
-
-# Exclude internal / dev scripts
-codesuture_verify*.py
-livepatch_verify*.py
-realbugg.py
-real.py
-*.zip
-.livepatch_*/
-
-# IDE / OS
 .vscode/
-.idea/
-.DS_Store
+*.code-workspace

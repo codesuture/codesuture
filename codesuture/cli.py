@@ -1,11 +1,11 @@
 import sys
 import argparse
-from codesuture.tracer import install, uninstall
+from codesuture.tracer import install, uninstall, _install_trace_on_all_threads
 
 def main():
     parser = argparse.ArgumentParser(prog='codesuture',
                                      description='Runtime Python bytecode patcher with self-healing re-execution')
-    parser.add_argument('--version', action='version', version='codesuture 0.5.1')
+    parser.add_argument('--version', action='version', version='codesuture 0.7.0')
     sub = parser.add_subparsers(dest='command', required=True)
 
     run_parser = sub.add_parser('run', help='Run a script with live patching')
@@ -102,7 +102,7 @@ def main():
                 patched_before = tracer.stats['patched']
                 tracer._handled_exc_ids.clear()
                 try:
-                    sys.settrace(tracer)
+                    _install_trace_on_all_threads(tracer)
                     globs = make_persisted_patch_globals(
                         "__main__",
                         {'__name__': '__main__', '__file__': args.script},

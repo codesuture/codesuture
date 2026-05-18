@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codesuture"
-version = "0.5.1"
+version = "0.7.0"
 description = "Runtime Python bytecode patcher with guard knowledge base, persistence, and self-healing re-execution"
 readme = "README.md"
 license = "MIT"
@@ -30,9 +30,7 @@ autonomous = ["llama-cpp-python"]
 codesuture = "codesuture.cli:main"
 
 [project.urls]
-"Source" = "https://github.com/codesuture-py/codesuture"
+"Source" = "https://github.com/codesuture/codesuture"
 
 [tool.setuptools.packages.find]
 include = ["codesuture*"]
-
-
