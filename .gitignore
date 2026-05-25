@@ -1,14 +1,53 @@
+# ---------------------------
+# Python
+# ---------------------------
 __pycache__/
 *.pyc
 *.pyo
-.venv/
-env/
-venv/
 *.egg-info/
 dist/
 build/
-.livepatch_cache/
-.codesuture_cache/
-.models/
+
+# ---------------------------
+# Virtual environments
+# ---------------------------
+.venv/
+env/
+venv/
+
+# ---------------------------
+# IDE / editor
+# ---------------------------
 .vscode/
+.idea/
 *.code-workspace
+
+# ---------------------------
+# CodeSuture runtime artifacts
+# ---------------------------
+.codesuture_store/
+.codesuture_cache/
+.livepatch_cache/
+.codesuture_fingerprints
+.models/
+
+# ---------------------------
+# Test / CI artifacts
+# ---------------------------
+.pytest_cache/
+htmlcov/
+.coverage
+*.log
+
+# ---------------------------
+# Planning & roadmap (local only)
+# ---------------------------
+ROADMAP.md
+implementation_plan.md
+task.md
+walkthrough.md
+
+# ---------------------------
+# Old verification suites (deleted)
+# ---------------------------
+v4test/

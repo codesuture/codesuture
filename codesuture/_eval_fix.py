@@ -1,5 +1,5 @@
 import sys
-from codesuture.codesuture_fix import apply_fix_with_info
+from codesuture.codesuture_fix import apply_fix
 
-result = apply_fix_with_info()
-print(result)   
+result = apply_fix()
+print(result)

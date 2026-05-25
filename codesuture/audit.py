@@ -1,7 +1,7 @@
 import os
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 def run_audit(patch_store_path: str = None):
 
@@ -26,7 +26,7 @@ def run_audit(patch_store_path: str = None):
         print("[CodeSuture] Patch store exists but is empty.")
         return
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     col_func    = max(18, max(len(p.get("func_name","?")) for p in patches) + 2)
     col_guard   = 12
@@ -35,23 +35,20 @@ def run_audit(patch_store_path: str = None):
     col_age     = 7
 
     try:
-        "|".encode(sys.stdout.encoding or 'ascii')
+        "│".encode(sys.stdout.encoding or 'ascii')
         HAS_UNICODE = True
     except Exception:
         HAS_UNICODE = False
 
     def row(f, g, t, d, a):
-        v = "|" if HAS_UNICODE else "|"
+        v = "│" if HAS_UNICODE else "|"
         return (f"{v} {f:<{col_func}} {v} {g:<{col_guard}} {v} "
                 f"{t:<{col_target}} {v} {d:<{col_default}} {v} {a:<{col_age}} {v}")
 
     if HAS_UNICODE:
-        sep = (f"+-{'-'*col_func}-+-{'-'*col_guard}-+-"
-               f"{'-'*col_target}-+-{'-'*col_default}-+-{'-'*col_age}-+")
-        top = (f"+-{'-'*col_func}-+-{'-'*col_guard}-+-"
-               f"{'-'*col_target}-+-{'-'*col_default}-+-{'-'*col_age}-+++")
-        bot = (f"+-{'-'*col_func}-+-{'-'*col_guard}-+-"
-               f"{'-'*col_target}-+-{'-'*col_default}-+-{'-'*col_age}-+")
+        sep = f"├─{'─'*col_func}─┼─{'─'*col_guard}─┼─{'─'*col_target}─┼─{'─'*col_default}─┼─{'─'*col_age}─┤"
+        top = f"┌─{'─'*col_func}─┬─{'─'*col_guard}─┬─{'─'*col_target}─┬─{'─'*col_default}─┬─{'─'*col_age}─┐"
+        bot = f"└─{'─'*col_func}─┴─{'─'*col_guard}─┴─{'─'*col_target}─┴─{'─'*col_default}─┴─{'─'*col_age}─┘"
     else:
         sep = (f"|-{'*'*col_func}-+-{'*'*col_guard}-+-"
                f"{'*'*col_target}-+-{'*'*col_default}-+-{'*'*col_age}-|")
