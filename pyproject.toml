@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codesuture"
-version = "0.7.2"
+version = "0.7.3"
 description = "Runtime Python bytecode patcher with guard knowledge base, persistence, and self-healing re-execution"
 readme = "README.md"
 license = "MIT"

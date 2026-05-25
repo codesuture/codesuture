@@ -1,12 +1,12 @@
 # CodeSuture
 
-![CodeSuture Banner](assets/banner.png)
+![CodeSuture Banner](https://raw.githubusercontent.com/codesuture/codesuture/main/assets/banner.png)
 
 **Runtime guard synthesis for CPython 3.11+. Catches structural crashes, patches live bytecode, keeps your server running.**
 
-[![Version](https://img.shields.io/badge/version-0.7.2-blue)]()
+[![Version](https://img.shields.io/badge/version-0.7.3-blue)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-brightgreen)]()
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/codesuture/codesuture/blob/main/LICENSE)
 [![Status](https://img.shields.io/badge/status-beta-orange)]()
 
 ```
@@ -190,6 +190,6 @@ app = CodeSutureMiddleware(wsgi_app)
 
 ## License
 
-MIT. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](https://github.com/codesuture/codesuture/blob/main/LICENSE) for details.
 
-For a detailed history of changes, see the [Changelog](CHANGELOG.md).
+For a detailed history of changes, see the [Changelog](https://github.com/codesuture/codesuture/blob/main/CHANGELOG.md).
