@@ -4,7 +4,7 @@
 
 **Runtime guard synthesis for CPython 3.11+. Catches structural crashes, patches live bytecode, keeps your server running.**
 
-[![Version](https://img.shields.io/badge/version-0.7.1-blue)]()
+[![Version](https://img.shields.io/badge/version-0.7.2-blue)]()
 [![Python](https://img.shields.io/badge/python-3.11%2B-brightgreen)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Status](https://img.shields.io/badge/status-beta-orange)]()
