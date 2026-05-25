@@ -24,10 +24,10 @@ def test_index_guard_synthesis():
     spec = PatchSpec('index_guard', 'i', 0, list_len_var='lst')
     new_bc = synthesize_guarded_code(original.__code__, spec)
     new_code = new_bc.to_code()
-    new_func = types.FunctionType(new_code, {})
+    new_func = types.FunctionType(new_code, {'len': len})
 
     assert new_func([10, 20], 1) == 20
-    assert new_func([10, 20], 5) == 10
+    assert new_func([10, 20], 5) == 0  # returns default, NOT items[0]
 
 def test_type_coercion_guard_synthesis():
 

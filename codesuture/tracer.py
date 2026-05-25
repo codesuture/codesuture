@@ -1,4 +1,5 @@
 import sys
+import types
 import os
 import json
 from datetime import datetime
@@ -10,6 +11,8 @@ from codesuture.rewind import rewind_frame_to_start
 _PYTHON_PREFIX = os.path.normcase(os.path.abspath(sys.prefix)) + os.sep
 _PYTHON_BASE_PREFIX = os.path.normcase(os.path.abspath(sys.base_prefix)) + os.sep
 _CODESUTURE_ROOT = os.path.normcase(os.path.abspath(os.path.dirname(__file__))) + os.sep
+
+_ORIGINAL_CODES = {}  # {func_key: original_code_object}
 
 def _is_internal_frame(frame):
 
@@ -34,7 +37,7 @@ class _CodeSutureFallbackSuppression(Exception):
 
 
 class CodeSutureTracer:
-    def __init__(self, dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7):
+    def __init__(self, dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7, silent=False):
         import threading
         self.dry_run = dry_run
         self.log_file = log_file
@@ -44,6 +47,7 @@ class CodeSutureTracer:
         self.verbose = verbose
         self.shadow_mode = shadow
         self.ttl = ttl
+        self.silent = silent
         self._patched_codes = {}  
         self.attempts = {}  
         self.stats = {
@@ -128,8 +132,9 @@ class CodeSutureTracer:
         fp = compute_fingerprint(frame.f_code, frame.f_lasti, exc_type.__name__)
         cached = lookup(fp)
         if cached:
-            print(f"[CodeSuture] Known crash pattern #{fp[:8]} -- "
-                  f"applying cached {cached['guard_type']} guard directly.")
+            if not self.silent:
+                print(f"[CodeSuture] Known crash pattern #{fp[:8]} -- "
+                      f"applying cached {cached['guard_type']} guard directly.")
             from codesuture.pattern_matcher import PatchSpec
 
             spec = PatchSpec(
@@ -163,7 +168,8 @@ class CodeSutureTracer:
 
         if spec is None and self.autonomous and func is not None:
 
-            print(f"[CodeSuture] Autonomous mode activated for unknown error: {exc_type.__name__}")
+            if not self.silent:
+                print(f"[CodeSuture] Autonomous mode activated for unknown error: {exc_type.__name__}")
             import traceback
             from codesuture.code_replacer import get_source_from_frame
             from codesuture.plugins.autonomous import propose_fix
@@ -179,7 +185,8 @@ class CodeSutureTracer:
             module_name = getattr(func, '__module__', '__main__')
 
             if test_fix(self.script_path, module_name, func_name, new_source, exc_type.__name__):
-                print(f"[CodeSuture] LLM fix PASSED sandbox. Learning rule for {func_name}.")
+                if not self.silent:
+                    print(f"[CodeSuture] LLM fix PASSED sandbox. Learning rule for {func_name}.")
                 save_learned_rule(exc_type.__name__, str(exc_value), func_name, new_source)
                 spec = PatchSpec(
                     strategy='autonomous_rule',
@@ -187,7 +194,8 @@ class CodeSutureTracer:
                     default_value=new_source
                 )
             else:
-                print("[CodeSuture] LLM fix FAILED sandbox. Skipping autonomous patch.")
+                if not self.silent:
+                    print("[CodeSuture] LLM fix FAILED sandbox. Skipping autonomous patch.")
 
         if spec is None:
             return
@@ -251,25 +259,29 @@ class CodeSutureTracer:
                 confidence = "LOW"
             confidence_detail = (f"pattern seen {count}x in fingerprint registry" if count > 0
                                  else "new pattern, not in fingerprint registry")
-            print(f"[CodeSuture DRY-RUN] Would apply {spec.strategy} on '{display_name}' in {frame.f_code.co_name}()")
-            print(f"[CodeSuture DRY-RUN] Confidence: {confidence} ({confidence_detail})")
-            print(f"  Default value: {repr(spec.default_value)}")
-            print(f"  Guard type: {spec.strategy}")
+            if not self.silent:
+                print(f"[CodeSuture DRY-RUN] Would apply {spec.strategy} on '{display_name}' in {frame.f_code.co_name}()")
+                print(f"[CodeSuture DRY-RUN] Confidence: {confidence} ({confidence_detail})")
+                print(f"  Default value: {repr(spec.default_value)}")
+                print(f"  Guard type: {spec.strategy}")
             self._log(entry)
             self.stats["dry_run_suggestions"] += 1
             return
         else:
-            print(f"[CodeSuture] Caught {exc_type.__name__}: {exc_value}")
+            if not self.silent:
+                print(f"[CodeSuture] Caught {exc_type.__name__}: {exc_value}")
 
             sig = (spec.var_name, spec.key_name, spec.strategy, exc_type.__name__)
             is_reuse = sig in self.patched_signatures
 
             if is_reuse:
-                print(f"[CodeSuture] Reusing existing patch for '{display_name}' in {frame.f_code.co_name}()")
+                if not self.silent:
+                    print(f"[CodeSuture] Reusing existing patch for '{display_name}' in {frame.f_code.co_name}()")
                 spec = self.patched_signatures[sig]
 
             if not cached:
-                print(f"[CodeSuture] Applying {spec.strategy} on '{display_name}' ...")
+                if not self.silent:
+                    print(f"[CodeSuture] Applying {spec.strategy} on '{display_name}' ...")
 
             try:
                 if getattr(spec, 'target_func', None):
@@ -278,6 +290,11 @@ class CodeSutureTracer:
                 else:
                     func = get_function_from_frame(frame)
                     old_code = frame.f_code
+
+                if func is not None:
+                    func_key = f"{frame.f_code.co_filename}:{frame.f_code.co_name}"
+                    if func_key not in _ORIGINAL_CODES:
+                        _ORIGINAL_CODES[func_key] = func.__code__
 
                 new_bc = synthesize_guarded_code(old_code, spec)
                 new_code = new_bc.to_code()
@@ -311,7 +328,8 @@ class CodeSutureTracer:
                 self._log(entry)
                 self.stats["patched"] += 1
                 self._handled_exc_ids.add(exc_id)
-                print(f"[CodeSuture] Patch applied to {getattr(func, '__name__', 'unknown')}().")
+                if not self.silent:
+                    print(f"[CodeSuture] Patch applied to {getattr(func, '__name__', 'unknown')}().")
                 if self._arm_http_transaction_replay(frame, func, exc_id, spec, display_name):
                     return
                 if func is not None and not self._is_uninvokable(func, frame):
@@ -331,7 +349,8 @@ class CodeSutureTracer:
                             ctypes.pythonapi.PyErr_Clear()
                             self._handled_exc_ids.add(exc_id)
                             self._rewound_exc_ids.add(exc_id)
-                            print(f"[CodeSuture] Active Shield: Native frame rewound for {getattr(func, '__name__', 'unknown')}() successfully.")
+                            if not self.silent:
+                                print(f"[CodeSuture] Active Shield: Native frame rewound for {getattr(func, '__name__', 'unknown')}() successfully.")
                             return None
                         except Exception:
                             self._try_transaction_fallback(frame, func, exc_id)
@@ -369,22 +388,26 @@ class CodeSutureTracer:
             curr = curr.tb_next
         internal_frame = curr.tb_frame
 
-        print(f"[CodeSuture] ENGINE SELF-HEAL: caught internal {type(internal_exc).__name__}: {internal_exc}")
-        print(f"[CodeSuture]   in {internal_frame.f_code.co_name}() at {internal_frame.f_code.co_filename}:{internal_frame.f_lineno}")
+        if not self.silent:
+            print(f"[CodeSuture] ENGINE SELF-HEAL: caught internal {type(internal_exc).__name__}: {internal_exc}")
+            print(f"[CodeSuture]   in {internal_frame.f_code.co_name}() at {internal_frame.f_code.co_filename}:{internal_frame.f_lineno}")
 
         try:
             spec = analyze_exception(
                 internal_frame, type(internal_exc), internal_exc, internal_tb
             )
         except Exception:
-            print("[CodeSuture]   self-heal analysis failed")
+            if not self.silent:
+                print("[CodeSuture]   self-heal analysis failed")
             return None
 
         if spec is None:
-            print("[CodeSuture]   no deterministic patch found for internal error")
+            if not self.silent:
+                print("[CodeSuture]   no deterministic patch found for internal error")
             return None
 
-        print(f"[CodeSuture]   Applying {spec.strategy} on '{spec.var_name}' …")
+        if not self.silent:
+            print(f"[CodeSuture]   Applying {spec.strategy} on '{spec.var_name}' …")
         try:
             func = get_function_from_frame(internal_frame)
             new_bc = synthesize_guarded_code(internal_frame.f_code, spec)
@@ -392,7 +415,8 @@ class CodeSutureTracer:
             replace_function_code(func, new_code)
             _force_despecialize(func)
             self.stats["patched"] += 1
-            print(f"[CodeSuture]   Self-healed {func.__name__}().")
+            if not self.silent:
+                print(f"[CodeSuture]   Self-healed {func.__name__}().")
 
             from codesuture.persistence import save_patch
             save_patch(func, new_code)
@@ -429,20 +453,30 @@ class CodeSutureTracer:
                     except Exception:
                         pass
             elif isinstance(ref, tuple):
-                for i, c in enumerate(ref):
-                    if c is old_code:
-                        try:
-                            addr = id(ref) + 24 + i * 8
-                            ctypes.c_void_p.from_address(addr).value = id(new_code)
-                            ctypes.pythonapi.Py_IncRef(ctypes.py_object(new_code))
-                            replaced = True
-                        except Exception:
-                            pass
+                # ref is likely a co_consts tuple in a parent code object
+                # Find functions that own code objects containing this tuple
+                for code_ref in gc.get_referrers(ref):
+                    if isinstance(code_ref, types.CodeType) and ref == code_ref.co_consts:
+                        new_consts = list(ref)
+                        for i, item in enumerate(new_consts):
+                            if item is old_code:
+                                new_consts[i] = new_code
+                        new_parent = code_ref.replace(co_consts=tuple(new_consts))
+                        for func_ref in gc.get_referrers(code_ref):
+                            if isinstance(func_ref, types.FunctionType) and func_ref.__code__ is code_ref:
+                                func_ref.__code__ = new_parent
+                                try:
+                                    _force_despecialize(func_ref)
+                                except Exception:
+                                    pass
+                        replaced = True
 
         if propagated_count > 0:
-            print(f"[CodeSuture] Propagated patch to {propagated_count} additional live reference(s) of {frame.f_code.co_name}.")
+            if not self.silent:
+                print(f"[CodeSuture] Propagated patch to {propagated_count} additional live reference(s) of {frame.f_code.co_name}.")
         elif replaced:
-            print(f"[CodeSuture] In-memory propagated patch applied to {frame.f_code.co_name}.")
+            if not self.silent:
+                print(f"[CodeSuture] In-memory propagated patch applied to {frame.f_code.co_name}.")
         else:
             if func is None:
                 func_name = frame.f_code.co_name
@@ -451,7 +485,8 @@ class CodeSutureTracer:
             if func and hasattr(func, "__code__") and getattr(func, "__code__", None) is old_code:
                 func.__code__ = new_code
                 _force_despecialize(func)
-                print(f"[CodeSuture] In-memory propagated patch applied to {func.__name__}().")
+                if not self.silent:
+                    print(f"[CodeSuture] In-memory propagated patch applied to {func.__name__}().")
             else:
                 print("[CodeSuture] Could not find code object in memory to persist.")
 
@@ -482,7 +517,8 @@ class CodeSutureTracer:
         self._thread_state.http_replay_patch_spec = spec
         self._thread_state.http_replay_patch_target = target_name
         self._rewound_exc_ids.add(exc_id)
-        print(f"[CodeSuture] Transaction replay armed for {getattr(func, '__name__', 'unknown')}().")
+        if not self.silent:
+            print(f"[CodeSuture] Transaction replay armed for {getattr(func, '__name__', 'unknown')}().")
         return True
 
     def _should_replay_http_transaction(self, exc):
@@ -543,7 +579,8 @@ class CodeSutureTracer:
             )
             sock.sendall(raw.encode())
             self._rewound_exc_ids.add(exc_id)
-            print(f"[CodeSuture] Transaction fallback: sent graceful 500 for {getattr(func, '__name__', 'unknown')}().")
+            if not self.silent:
+                print(f"[CodeSuture] Transaction fallback: sent graceful 500 for {getattr(func, '__name__', 'unknown')}().")
             raise _CodeSutureFallbackSuppression()
         except _CodeSutureFallbackSuppression:
             raise
@@ -552,11 +589,12 @@ class CodeSutureTracer:
         return self
 
     def report(self):
-        print("\n[CodeSuture] Session summary:")
-        print(f"  Patches applied: {len(self.patched_signatures)}")
-        if self.dry_run:
-            print(f"  Dry-run suggestions: {self.stats['dry_run_suggestions']}")
-            print(f"[CodeSuture DRY-RUN] No patches applied. Run without --dry-run to apply.")
+        if not self.silent:
+            print("\n[CodeSuture] Session summary:")
+            print(f"  Patches applied: {len(self.patched_signatures)}")
+            if self.dry_run:
+                print(f"  Dry-run suggestions: {self.stats['dry_run_suggestions']}")
+                print(f"[CodeSuture DRY-RUN] No patches applied. Run without --dry-run to apply.")
 
 _original_excepthook = None
 _original_http_handle_one_request = None
@@ -687,7 +725,8 @@ def _install_http_transaction_replay(tracer):
                         return
                     tracer._clear_http_transaction_replay()
                     replayed = True
-                    print("[CodeSuture] Transaction replay: retrying patched HTTP handler in-place.")
+                    if not tracer.silent:
+                        print("[CodeSuture] Transaction replay: retrying patched HTTP handler in-place.")
                     method = getattr(self, method_name)
                     method()
                 if not sent_response:
@@ -723,14 +762,18 @@ def _codesuture_excepthook(tracer, exc_type, exc_value, exc_tb):
     if exc_tb:
         tracer._handle_exception(exc_tb.tb_frame, exc_type, exc_value, exc_tb, thread=threading.current_thread())
 
-    # If CodeSuture handled and patched this exception, suppress the
-    # default traceback — the patch was applied and re-execution will
-    # handle the rest.
-    if id(exc_value) in tracer._handled_exc_ids:
-        if id(exc_value) in tracer._rewound_exc_ids:
+    exc_id = id(exc_value)
+    if exc_id in tracer._handled_exc_ids:
+        if exc_id in tracer._rewound_exc_ids:
+            if tracer.silent:
+                return
+            # Print a structured summary instead of fully suppressing
+            func_name = exc_tb.tb_frame.f_code.co_name if exc_tb else exc_type.__name__
+            print(f"[CodeSuture] Self-healed: {exc_type.__name__} in {func_name}()")
+            print(f"[CodeSuture]   Guard applied, execution rewound successfully")
+            print(f"[CodeSuture]   Review: codesuture explain")
             return
-        return
-
+        
     if _original_excepthook:
         _original_excepthook(exc_type, exc_value, exc_tb)
     else:
@@ -772,12 +815,13 @@ def _install_monitoring_engine(tracer):
 
     mon.register_callback(TOOL_ID, mon.events.RAISE, _on_raise)
     mon.set_events(TOOL_ID, mon.events.RAISE)
-    print('[CodeSuture] Python 3.12+ sys.monitoring active. Zero baseline overhead.')
+    if not tracer.silent:
+        print('[CodeSuture] Python 3.12+ sys.monitoring active. Zero baseline overhead.')
 
-def install(dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7):
+def install(dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7, silent=False):
     global _original_excepthook
     import threading
-    tracer = CodeSutureTracer(dry_run, log_file, max_retries, autonomous, script_path, verbose, shadow, ttl)
+    tracer = CodeSutureTracer(dry_run, log_file, max_retries, autonomous, script_path, verbose, shadow, ttl, silent=silent)
 
     if sys.version_info >= (3, 12) and hasattr(sys, 'monitoring'):
         _install_monitoring_engine(tracer)

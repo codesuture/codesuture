@@ -2,7 +2,7 @@
 import os
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 def run_explain(func_name=None):
 
@@ -32,10 +32,10 @@ def run_explain(func_name=None):
             print(f"[CodeSuture] No patches found for '{func_name}'.")
             return
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     try:
-        "|".encode(sys.stdout.encoding or "ascii")
+        "│".encode(sys.stdout.encoding or "ascii")
         HAS_UNICODE = True
     except Exception:
         HAS_UNICODE = False
@@ -47,7 +47,7 @@ def run_explain(func_name=None):
     col_age     = 12
     col_safe    = 9
 
-    v = "|" if HAS_UNICODE else "|"
+    v = "│" if HAS_UNICODE else "|"
 
     def row(f, g, t, d, a, s):
         return (f"{v} {f:<{col_func}} {v} {g:<{col_guard}} {v} "
@@ -55,12 +55,12 @@ def run_explain(func_name=None):
                 f"{a:<{col_age}} {v} {s:<{col_safe}} {v}")
 
     if HAS_UNICODE:
-        sep = (f"+-{'-'*col_func}-+-{'-'*col_guard}-+-"
-               f"{'-'*col_target}-+-{'-'*col_default}-+-{'-'*col_age}-+-{'-'*col_safe}-+")
-        top = (f"+-{'-'*col_func}-+-{'-'*col_guard}-+-"
-               f"{'-'*col_target}-+-{'-'*col_default}-+-{'-'*col_age}-+-{'-'*col_safe}-+")
-        bot = (f"+-{'-'*col_func}-+-{'-'*col_guard}-+-"
-               f"{'-'*col_target}-+-{'-'*col_default}-+-{'-'*col_age}-+-{'-'*col_safe}-+")
+        sep = (f"├─{'─'*col_func}─┼─{'─'*col_guard}─┼─"
+               f"{'─'*col_target}─┼─{'─'*col_default}─┼─{'─'*col_age}─┼─{'─'*col_safe}─┤")
+        top = (f"┌─{'─'*col_func}─┬─{'─'*col_guard}─┬─"
+               f"{'─'*col_target}─┬─{'─'*col_default}─┬─{'─'*col_age}─┬─{'─'*col_safe}─┐")
+        bot = (f"└─{'─'*col_func}─┴─{'─'*col_guard}─┴─"
+               f"{'─'*col_target}─┴─{'─'*col_default}─┴─{'─'*col_age}─┴─{'─'*col_safe}─┘")
     else:
         sep = (f"+-{'-'*col_func}-+-{'-'*col_guard}-+-"
                f"{'-'*col_target}-+-{'-'*col_default}-+-{'-'*col_age}-+-{'-'*col_safe}-+")

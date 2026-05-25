@@ -18,6 +18,8 @@ def main():
     run_parser.add_argument('--verbose', action='store_true', help='Show detailed debug output')
     run_parser.add_argument('--shadow', action='store_true', help='Warn if patched functions return sentinel values')
     run_parser.add_argument('--ttl', type=int, default=7, metavar='DAYS', help='Patch TTL in days (default: 7)')
+    run_parser.add_argument('--silent', action='store_true',
+                            help='Suppress exception output for healed crashes (default: show summary)')
 
     sub.add_parser('audit', help='Show all active patches')
 
@@ -96,7 +98,8 @@ def main():
                              max_retries=args.retries,
                              autonomous=getattr(args, 'autonomous', False),
                              script_path=args.script, verbose=args.verbose,
-                             shadow=args.shadow, ttl=args.ttl)
+                             shadow=args.shadow, ttl=args.ttl,
+                             silent=args.silent)
             max_runs = args.retries + 1
             for run in range(max_runs):
                 patched_before = tracer.stats['patched']

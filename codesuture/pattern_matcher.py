@@ -3,6 +3,12 @@ from typing import Optional, NamedTuple
 import dis
 import re
 
+from codesuture.opcodes import (
+    CALL_OPCODES, JUMP_FALSE_OPCODES, JUMP_TRUE_OPCODES, ALL_JUMP_OPCODES,
+    METHOD_LOAD_OPCODES, SUBSCRIPT_OPCODES, ARITHMETIC_OPCODES,
+    FORMAT_OPCODES, TERMINATOR_OPCODES,
+)
+
 class PatchSpec(NamedTuple):
     strategy: str
     var_name: str
@@ -108,7 +114,7 @@ def _check_property_origin(frame, instructions, crash_idx):
     load_attr_instr = None
     load_attr_idx = -1
     for i in range(crash_idx - 1, -1, -1):
-        if instructions[i].opname in ('LOAD_ATTR', 'LOAD_METHOD'):
+        if instructions[i].opname in METHOD_LOAD_OPCODES:
             load_attr_instr = instructions[i]
             load_attr_idx = i
             break
@@ -124,7 +130,7 @@ def _check_property_origin(frame, instructions, crash_idx):
         if instructions[i].opname in ('LOAD_FAST', 'LOAD_DEREF', 'LOAD_GLOBAL'):
             obj_instr = instructions[i]
             break
-        elif instructions[i].opname in ('LOAD_ATTR', 'LOAD_METHOD'):
+        elif instructions[i].opname in METHOD_LOAD_OPCODES:
             pass
         else:
             break
@@ -151,26 +157,26 @@ def _infer_default(var_name, instructions=None, crash_idx=None):
     if instructions is not None and crash_idx is not None:
         for i in range(crash_idx + 1, min(crash_idx + 11, len(instructions))):
             instr = instructions[i]
-            if instr.opname in ('LOAD_ATTR', 'LOAD_METHOD'):
+            if instr.opname in METHOD_LOAD_OPCODES:
                 string_methods = {'upper', 'lower', 'strip', 'replace', 'split', 'join', 'format', 'startswith', 'endswith', 'capitalize', 'lstrip', 'rstrip', 'title', 'swapcase', 'center', 'ljust', 'rjust', 'zfill', 'encode'}
                 list_dict_methods = {'append', 'extend', 'pop', 'remove', 'get', 'keys', 'values', 'items', 'update'}
                 if instr.argval in string_methods:
                     return ""
                 if instr.argval in list_dict_methods:
                     return []
-            elif instr.opname in ('BINARY_OP', 'BINARY_ADD', 'BINARY_SUBTRACT', 'BINARY_MULTIPLY', 'BINARY_TRUE_DIVIDE'):
+            elif instr.opname in ARITHMETIC_OPCODES:
                 return 0
-            elif instr.opname in ('POP_JUMP_IF_FALSE', 'POP_JUMP_FORWARD_IF_FALSE', 'POP_JUMP_IF_TRUE', 'POP_JUMP_FORWARD_IF_TRUE'):
+            elif instr.opname in ALL_JUMP_OPCODES:
                 return False
             elif instr.opname == 'IS_OP':
                 return None
-            elif instr.opname in ('FORMAT_VALUE', 'BUILD_STRING'):
+            elif instr.opname in FORMAT_OPCODES:
                 return ""
-            elif instr.opname == 'BINARY_SUBSCR':
+            elif instr.opname in SUBSCRIPT_OPCODES:
                 return {}
-            elif instr.opname in ('LOAD_CONST', 'LOAD_FAST', 'PRECALL', 'CALL'):
+            elif instr.opname in ('LOAD_CONST', 'LOAD_FAST') or instr.opname in CALL_OPCODES:
                 continue
-            elif instr.opname in ('RETURN_VALUE', 'STORE_FAST'):
+            elif instr.opname in TERMINATOR_OPCODES:
                 break
 
     name = var_name.lower()
@@ -190,13 +196,13 @@ def _infer_subscript_default(instructions=None, crash_idx=None):
             if instr.opname in ('LOAD_CONST', 'LOAD_FAST'):
                 i += 1
                 continue
-            if instr.opname == 'BINARY_SUBSCR':
+            if instr.opname in SUBSCRIPT_OPCODES:
                 i += 1
                 continue
             break
         for j in range(i, min(i + 4, len(instructions))):
             instr = instructions[j]
-            if instr.opname in ('LOAD_ATTR', 'LOAD_METHOD'):
+            if instr.opname in METHOD_LOAD_OPCODES:
                 string_methods = {
                     'capitalize', 'casefold', 'center', 'encode', 'expandtabs',
                     'format', 'format_map', 'join', 'ljust', 'lower', 'lstrip',
@@ -206,19 +212,18 @@ def _infer_subscript_default(instructions=None, crash_idx=None):
                 }
                 if instr.argval in string_methods:
                     return ""
-            elif instr.opname in ('BINARY_OP', 'BINARY_ADD', 'BINARY_SUBTRACT',
-                                   'BINARY_MULTIPLY', 'BINARY_TRUE_DIVIDE'):
+            elif instr.opname in ARITHMETIC_OPCODES:
                 return 0
-            elif instr.opname == 'CALL':
+            elif instr.opname in CALL_OPCODES:
                 for k in range(max(0, j - 2), j):
                     if instructions[k].opname == 'LOAD_GLOBAL' and \
                        instructions[k].argval in ('int', 'float'):
                         return 0
             elif instr.opname in ('LIST_APPEND', 'STORE_SUBSCR'):
                 return None
-            elif instr.opname in ('RETURN_VALUE', 'STORE_FAST'):
+            elif instr.opname in TERMINATOR_OPCODES:
                 break
-            elif instr.opname in ('PRECALL',):
+            elif instr.opname in CALL_OPCODES:
                 continue
             else:
                 break
@@ -251,7 +256,7 @@ def _callable_guard_spec(frame):
 
     call_idx = None
     for i in range(max(0, idx - 1), min(idx + 3, len(instructions))):
-        if instructions[i].opname == 'CALL':
+        if instructions[i].opname in CALL_OPCODES:
             call_idx = i
             break
     if call_idx is None:
@@ -275,8 +280,11 @@ def _callable_guard_spec(frame):
     if var_name is None:
         return None
 
-    replacement = _KNOWN_CALLABLES.get(var_name, lambda *a, **kw: 0)
-    return PatchSpec('callable_guard', var_name, default_value=replacement)
+    default_callable = _KNOWN_CALLABLES.get(var_name)
+    if default_callable is None:
+        print(f"[CodeSuture] WARNING: Skipping callable_guard for unknown callable '{var_name}' \u2014 manual review required")
+        return None
+    return PatchSpec('callable_guard', var_name, default_value=default_callable)
 
 def _null_guard_spec(frame):
     instructions = list(dis.get_instructions(frame.f_code))
@@ -284,18 +292,18 @@ def _null_guard_spec(frame):
     if tgt is None:
         return None
 
-    if tgt.opname not in ('LOAD_ATTR', 'STORE_ATTR', 'DELETE_ATTR', 'LOAD_METHOD'):
+    if tgt.opname not in (METHOD_LOAD_OPCODES | {'STORE_ATTR', 'DELETE_ATTR'}):
         return None
 
     idx = instructions.index(tgt)
 
     chain_instrs = []
-    if tgt.opname in ('LOAD_ATTR', 'LOAD_METHOD'):
+    if tgt.opname in METHOD_LOAD_OPCODES:
         chain_instrs.append(tgt)
     curr = idx - 1
     while curr >= 0:
         instr = instructions[curr]
-        if instr.opname in ('LOAD_ATTR', 'LOAD_METHOD', 'LOAD_FAST', 'LOAD_GLOBAL', 'LOAD_DEREF'):
+        if instr.opname in (METHOD_LOAD_OPCODES | {'LOAD_FAST', 'LOAD_GLOBAL', 'LOAD_DEREF'}):
             chain_instrs.insert(0, instr)
             if instr.opname in ('LOAD_FAST', 'LOAD_GLOBAL', 'LOAD_DEREF'):
                 break
@@ -308,7 +316,7 @@ def _null_guard_spec(frame):
         for i in range(idx, -1, -1):
             if instructions[i].opname in ('LOAD_FAST', 'LOAD_DEREF'):
                 var_name = frame.f_code.co_varnames[instructions[i].arg]
-                attr_name = tgt.argval if tgt.opname in ('LOAD_ATTR', 'LOAD_METHOD') else None
+                attr_name = tgt.argval if tgt.opname in METHOD_LOAD_OPCODES else None
                 return PatchSpec('null_guard', var_name, _infer_attribute_default(attr_name, var_name, instructions, idx))
         return None
 
@@ -337,7 +345,7 @@ def _null_guard_spec(frame):
             default = _infer_attribute_default(attr_name, parent_local, instructions, idx)
             return PatchSpec('null_guard', parent_local, default, key_name=tuple(attr_chain))
         else:
-            attr_name = tgt.argval if tgt.opname in ('LOAD_ATTR', 'LOAD_METHOD') else None
+            attr_name = tgt.argval if tgt.opname in METHOD_LOAD_OPCODES else None
             return PatchSpec('null_guard', parent_local, _infer_attribute_default(attr_name, parent_local, instructions, idx), key_name=(attr_name,) if attr_name else None)
 
     for i in range(1, len(chain_instrs)):
@@ -353,18 +361,18 @@ def _null_guard_spec(frame):
             prop = getattr(type(obj), attr, None)
             if isinstance(prop, property) and prop.fget is not None:
                 attr_chain = [chain_instrs[j].argval for j in range(1, i + 1)]
-                attr_name = chain_instrs[i+1].argval if i + 1 < len(chain_instrs) else (tgt.argval if tgt.opname in ('LOAD_ATTR', 'LOAD_METHOD') else None)
+                attr_name = chain_instrs[i+1].argval if i + 1 < len(chain_instrs) else (tgt.argval if tgt.opname in METHOD_LOAD_OPCODES else None)
                 default = _infer_attribute_default(attr_name, attr, instructions, idx)
                 return PatchSpec('return_guard', parent_local, default, key_name=tuple(attr_chain), target_func=prop.fget, target_name=f"{type(obj).__name__}.{attr}")
 
             attr_chain = [chain_instrs[j].argval for j in range(1, i + 1)]
-            attr_name = chain_instrs[i+1].argval if i + 1 < len(chain_instrs) else (tgt.argval if tgt.opname in ('LOAD_ATTR', 'LOAD_METHOD') else None)
+            attr_name = chain_instrs[i+1].argval if i + 1 < len(chain_instrs) else (tgt.argval if tgt.opname in METHOD_LOAD_OPCODES else None)
             default = _infer_attribute_default(attr_name, attr, instructions, idx)
             return PatchSpec('null_guard', parent_local, default, key_name=tuple(attr_chain))
 
         obj = next_obj
 
-    attr_name = tgt.argval if tgt.opname in ('LOAD_ATTR', 'LOAD_METHOD') else None
+    attr_name = tgt.argval if tgt.opname in METHOD_LOAD_OPCODES else None
     return PatchSpec('null_guard', parent_local, _infer_attribute_default(attr_name, parent_local, instructions, idx))
 
 def _division_guard_spec(frame):
@@ -447,7 +455,7 @@ def _try_chain_subscript(frame, instructions, failing_idx):
     root_var = None
     while pos >= 0:
         instr = instructions[pos]
-        if instr.opname == 'BINARY_SUBSCR':
+        if instr.opname in SUBSCRIPT_OPCODES:
             pos -= 1
             if pos < 0:
                 return None
@@ -473,7 +481,7 @@ def _try_chain_subscript(frame, instructions, failing_idx):
     fwd = failing_idx + 1
     while fwd + 1 < len(instructions):
         if (instructions[fwd].opname == 'LOAD_CONST' and
-                instructions[fwd + 1].opname == 'BINARY_SUBSCR'):
+                instructions[fwd + 1].opname in SUBSCRIPT_OPCODES):
             keys_fwd.append(frame.f_code.co_consts[instructions[fwd].arg])
             fwd += 2
         else:
@@ -494,13 +502,13 @@ def _try_chain_subscript(frame, instructions, failing_idx):
 def _index_bound_spec(frame):
     instructions = list(dis.get_instructions(frame.f_code))
     tgt = _find_target_instr(instructions, frame.f_lasti)
-    if tgt is None or tgt.opname != 'BINARY_SUBSCR':
+    if tgt is None or tgt.opname not in SUBSCRIPT_OPCODES:
         return None
     idx_instr = instructions.index(tgt)
     if idx_instr > 0 and instructions[idx_instr - 1].opname == 'LOAD_CONST':
         chain = []
         pos = idx_instr
-        while pos >= 2 and instructions[pos].opname == 'BINARY_SUBSCR':
+        while pos >= 2 and instructions[pos].opname in SUBSCRIPT_OPCODES:
             key_instr = instructions[pos - 1]
             if key_instr.opname not in ('LOAD_CONST', 'LOAD_FAST'):
                 break
@@ -527,7 +535,7 @@ def _index_bound_spec(frame):
     if len(loads) < 2:
         chain = []
         pos = idx_instr
-        while pos >= 2 and instructions[pos].opname == 'BINARY_SUBSCR':
+        while pos >= 2 and instructions[pos].opname in SUBSCRIPT_OPCODES:
             key_instr = instructions[pos - 1]
             if key_instr.opname not in ('LOAD_CONST', 'LOAD_FAST'):
                 return None
@@ -549,7 +557,8 @@ def _index_bound_spec(frame):
             key_name=tuple(chain),
         )
     list_var, idx_var = loads[1], loads[0]
-    return PatchSpec('index_guard', idx_var, 0, list_len_var=list_var)
+    inferred_default = _infer_default(idx_var, instructions, idx_instr)
+    return PatchSpec('index_guard', idx_var, inferred_default, list_len_var=list_var)
 
 def _dict_get_spec(frame, msg):
     match = re.search(r"KeyError\: '(\w+)'", msg)
@@ -558,7 +567,7 @@ def _dict_get_spec(frame, msg):
     key = match.group(1) if match else None
     instructions = list(dis.get_instructions(frame.f_code))
     tgt = _find_target_instr(instructions, frame.f_lasti)
-    if tgt is None or tgt.opname != 'BINARY_SUBSCR':
+    if tgt is None or tgt.opname not in SUBSCRIPT_OPCODES:
         return None
     idx = instructions.index(tgt)
 
@@ -610,7 +619,7 @@ def _type_coercion_spec(frame, msg):
 
     call_idx = None
     for i in range(max(0, idx - 1), min(idx + 3, len(instructions))):
-        if instructions[i].opname == 'CALL':
+        if instructions[i].opname in CALL_OPCODES:
             call_idx = i
             break
     if call_idx is None:
@@ -624,7 +633,7 @@ def _type_coercion_spec(frame, msg):
             break
         if instr.opname == 'LOAD_GLOBAL':
             continue
-        if instr.opname in ('PRECALL', 'PUSH_NULL'):
+        if instr.opname in CALL_OPCODES or instr.opname == 'PUSH_NULL':
             continue
         break
 

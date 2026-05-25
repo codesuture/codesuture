@@ -1,12 +1,89 @@
 
 import os
+import gc
 import json
 import shutil
-from datetime import datetime
+import types
+from datetime import datetime, timezone
 
 from codesuture.persistence import CACHE_DIR
 
+
+def rollback_runtime(name):
+    """Restore original code for a function at runtime."""
+    restored = False
+
+    # Try from in-memory _ORIGINAL_CODES first
+    try:
+        from codesuture.tracer import _ORIGINAL_CODES
+    except ImportError:
+        _ORIGINAL_CODES = {}
+
+    for func_key, original_code in list(_ORIGINAL_CODES.items()):
+        if func_key.endswith(f":{name}"):
+            # Search for functions whose current code has the same co_name
+            # The patched code replaced the original, so we look for functions
+            # with a code object named `name`
+            import sys
+            for mod in list(sys.modules.values()):
+                if mod is None:
+                    continue
+                for attr_name in dir(mod):
+                    try:
+                        obj = getattr(mod, attr_name)
+                    except Exception:
+                        continue
+                    if isinstance(obj, types.FunctionType) and obj.__code__.co_name == name:
+                        obj.__code__ = original_code
+                        print(f"[CodeSuture] Runtime code restored for {name}")
+                        restored = True
+                        break
+                if restored:
+                    break
+
+            if not restored:
+                # Also try gc.get_referrers on all code objects to find the patched one
+                for obj in gc.get_objects():
+                    if isinstance(obj, types.FunctionType) and obj.__code__.co_name == name and obj.__code__ is not original_code:
+                        obj.__code__ = original_code
+                        print(f"[CodeSuture] Runtime code restored for {name}")
+                        restored = True
+                        break
+
+            if restored:
+                del _ORIGINAL_CODES[func_key]
+                break
+
+    # If not found in _ORIGINAL_CODES, try loading from .orig.code file in the store
+    if not restored and os.path.isdir(CACHE_DIR):
+        import marshal
+        for fname in os.listdir(CACHE_DIR):
+            if fname.endswith(".orig.code") and name in fname:
+                path = os.path.join(CACHE_DIR, fname)
+                try:
+                    with open(path, "rb") as f:
+                        original_code = marshal.load(f)
+                    for obj in gc.get_objects():
+                        if isinstance(obj, types.FunctionType) and obj.__code__.co_name == name:
+                            obj.__code__ = original_code
+                            print(f"[CodeSuture] Runtime code restored for {name}")
+                            restored = True
+                            break
+                except Exception:
+                    pass
+                if restored:
+                    break
+
+    if not restored:
+        print(f"[CodeSuture] No live function found to restore for '{name}'.")
+
+    return restored
+
+
 def rollback_function(name):
+
+    # Restore runtime code first, before deleting persisted files
+    rollback_runtime(name)
 
     if not os.path.isdir(CACHE_DIR):
         print("[CodeSuture] Nothing to roll back.")
@@ -15,7 +92,12 @@ def rollback_function(name):
     removed = 0
     for fname in list(os.listdir(CACHE_DIR)):
 
-        base = fname.rsplit(".", 1)[0]  
+        # Strip known extensions to get the base name
+        base = fname
+        for ext in ('.orig.code', '.code', '.json'):
+            if fname.endswith(ext):
+                base = fname[:-len(ext)]
+                break
         func_part = base.split(".", 1)[-1] if "." in base else base
 
         if func_part == name or base == name or func_part.endswith(name):
@@ -59,7 +141,7 @@ def rollback_dry_run():
         print("[CodeSuture] Nothing to roll back. No patches found.")
         return
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     print()
     print("  [CodeSuture DRY-RUN] Would remove the following patches:")
     print()

@@ -4,6 +4,11 @@ Synthesises guard + original bytecode for all deterministic strategies.
 import ctypes
 from bytecode import Bytecode, Instr, Label, Compare
 from codesuture.pattern_matcher import PatchSpec
+from codesuture.opcodes import (
+    emit_call, emit_load_method, emit_jump_if_false, emit_jump_if_true,
+    emit_load_global, make_load_global, JUMP_IF_FALSE, JUMP_IF_TRUE,
+    LOAD_METHOD_OP, HAS_PRECALL,
+)
 
 def _force_despecialize(func):
     """
@@ -42,7 +47,7 @@ def validate_patch(original_code, patched_code):
         if instr.opname == 'LOAD_FAST':
             name = instr.argval
             if name not in allowed:
-                raise PatchValidationError(f"Patch rejected: LOAD_FAST '{name}' not in co_varnames â€” bytecode would corrupt frame. Patch was not applied.")
+                raise PatchValidationError(f"Patch rejected: LOAD_FAST '{name}' not in co_varnames — bytecode would corrupt frame. Patch was not applied.")
 
 def propagate_patch(original_func, patched_code) -> int:
     import gc
@@ -124,7 +129,7 @@ def _build_entry_point_null_guard(original_code, var_name, default):
         Instr('LOAD_FAST', var_name),
         Instr('LOAD_CONST', None),
         Instr('IS_OP', 0),
-        Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+        emit_jump_if_false(skip),
         Instr('LOAD_CONST', default),
         Instr('RETURN_VALUE'),
         skip
@@ -141,6 +146,8 @@ def _build_entry_point_null_guard(original_code, var_name, default):
 # Strategies that inject inline at the crash site (replace BINARY_SUBSCR etc.)
 # These are the ones that can corrupt exception tables when inside try blocks.
 _INLINE_STRATEGIES = frozenset({
+    'subscript_guard', 'key_guard', 'dict_get_guard',
+    'division_guard', 'chain_subscript_guard',
 })
 
 def synthesize_guarded_code(original_code, spec: PatchSpec) -> Bytecode:
@@ -268,7 +275,7 @@ def _build_null_guarded_code(original_code, var_name, default):
         Instr('LOAD_FAST', var_name),
         Instr('LOAD_CONST', None),
         Instr('IS_OP', 0),
-        Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+        emit_jump_if_false(skip),
         Instr('LOAD_CONST', default),
         Instr('STORE_FAST', var_name),
         skip
@@ -323,7 +330,7 @@ def _build_attr_null_guarded_code(original_code, local_var, attr_chain, default)
             Instr('LOAD_FAST', local_var),
             Instr('LOAD_CONST', None),
             Instr('IS_OP', 0),
-            Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+            emit_jump_if_false(skip),
             Instr('LOAD_CONST', default),
             Instr('RETURN_VALUE'),
             skip
@@ -343,7 +350,7 @@ def _build_attr_null_guarded_code(original_code, local_var, attr_chain, default)
             Instr('COPY', 1),
             Instr('LOAD_CONST', None),
             Instr('IS_OP', 0),
-            Instr('POP_JUMP_FORWARD_IF_TRUE', return_default),
+            emit_jump_if_true(return_default),
             Instr('LOAD_ATTR', attr)
         ])
 
@@ -351,7 +358,7 @@ def _build_attr_null_guarded_code(original_code, local_var, attr_chain, default)
         Instr('COPY', 1),
         Instr('LOAD_CONST', None),
         Instr('IS_OP', 0),
-        Instr('POP_JUMP_FORWARD_IF_TRUE', return_default),
+        emit_jump_if_true(return_default),
 
         Instr('POP_TOP'),
         Instr('JUMP_FORWARD', end_guard),
@@ -384,7 +391,7 @@ def _build_division_guarded_code(original_code, var_name, default):
             new_instrs.append(Instr('COPY', 1))
             new_instrs.append(Instr('LOAD_CONST', 0))
             new_instrs.append(Instr('COMPARE_OP', Compare.GT))
-            new_instrs.append(Instr('POP_JUMP_FORWARD_IF_TRUE', skip))
+            new_instrs.append(emit_jump_if_true(skip))
             new_instrs.append(Instr('POP_TOP'))
             new_instrs.append(Instr('LOAD_CONST', default))
             new_instrs.append(skip)
@@ -420,16 +427,28 @@ def _build_subscript_guarded_code(original_code, container_var, key_name_or_var,
             new_instrs.append(Instr('LOAD_FAST', '_codesuture_cont'))
             new_instrs.append(Instr('LOAD_CONST', None))
             new_instrs.append(Instr('COMPARE_OP', Compare.EQ))
-            new_instrs.append(Instr('POP_JUMP_FORWARD_IF_FALSE', skip_none))
+            new_instrs.append(emit_jump_if_false(skip_none))
             new_instrs.append(Instr('LOAD_CONST', default))
             new_instrs.append(Instr('JUMP_FORWARD', end))
             new_instrs.append(skip_none)
+            is_dict = Label()
+            new_instrs.append(emit_load_global('isinstance', push_null=True))
             new_instrs.append(Instr('LOAD_FAST', '_codesuture_cont'))
-            new_instrs.append(Instr('LOAD_METHOD', 'get'))
+            new_instrs.append(emit_load_global('dict', push_null=False))
+            new_instrs.extend(emit_call(2))
+            new_instrs.append(emit_jump_if_true(is_dict))
+            # Not a dict — use direct subscript (lists, tuples, etc.)
+            new_instrs.append(Instr('LOAD_FAST', '_codesuture_cont'))
+            new_instrs.append(Instr('LOAD_FAST', '_codesuture_key'))
+            new_instrs.append(Instr('BINARY_SUBSCR'))
+            new_instrs.append(Instr('JUMP_FORWARD', end))
+            new_instrs.append(is_dict)
+            # Dict — use safe .get()
+            new_instrs.append(Instr('LOAD_FAST', '_codesuture_cont'))
+            new_instrs.append(emit_load_method('get'))
             new_instrs.append(Instr('LOAD_FAST', '_codesuture_key'))
             new_instrs.append(Instr('LOAD_CONST', default))
-            new_instrs.append(Instr('PRECALL', 2))
-            new_instrs.append(Instr('CALL', 2))
+            new_instrs.extend(emit_call(2))
             new_instrs.append(end)
             replaced_count += 1
         else:
@@ -506,7 +525,7 @@ def _gen_chain_get(original_code, root_var, keys, default):
     if root_var in original_code.co_varnames:
         out.append(Instr('LOAD_FAST', root_var))
     else:
-        out.append(Instr('LOAD_GLOBAL', (False, root_var)))
+        out.append(emit_load_global(root_var, push_null=False))
     out.append(Instr('STORE_FAST', '_lp_chain'))
 
     for key in keys[:-1]:
@@ -514,13 +533,12 @@ def _gen_chain_get(original_code, root_var, keys, default):
         out.append(Instr('LOAD_FAST', '_lp_chain'))
         out.append(Instr('LOAD_CONST', None))
         out.append(Instr('COMPARE_OP', Compare.EQ))
-        out.append(Instr('POP_JUMP_FORWARD_IF_TRUE', skip))
+        out.append(emit_jump_if_true(skip))
         out.append(Instr('LOAD_FAST', '_lp_chain'))
-        out.append(Instr('LOAD_METHOD', 'get'))
+        out.append(emit_load_method('get'))
         out.append(Instr('LOAD_CONST', key))
         out.append(Instr('LOAD_CONST', None))
-        out.append(Instr('PRECALL', 2))
-        out.append(Instr('CALL', 2))
+        out.extend(emit_call(2))
         out.append(Instr('STORE_FAST', '_lp_chain'))
         out.append(skip)
 
@@ -530,17 +548,16 @@ def _gen_chain_get(original_code, root_var, keys, default):
     out.append(Instr('LOAD_FAST', '_lp_chain'))
     out.append(Instr('LOAD_CONST', None))
     out.append(Instr('COMPARE_OP', Compare.EQ))
-    out.append(Instr('POP_JUMP_FORWARD_IF_TRUE', skip_last))
+    out.append(emit_jump_if_true(skip_last))
     if isinstance(last, int):
         default_last = Label()
         load_last = Label()
         out.append(Instr('LOAD_CONST', last))
-        out.append(Instr('LOAD_GLOBAL', (True, 'len')))
+        out.append(emit_load_global('len', push_null=True))
         out.append(Instr('LOAD_FAST', '_lp_chain'))
-        out.append(Instr('PRECALL', 1))
-        out.append(Instr('CALL', 1))
+        out.extend(emit_call(1))
         out.append(Instr('COMPARE_OP', Compare.GE))
-        out.append(Instr('POP_JUMP_FORWARD_IF_TRUE', default_last))
+        out.append(emit_jump_if_true(default_last))
         out.append(load_last)
         out.append(Instr('LOAD_FAST', '_lp_chain'))
         out.append(Instr('LOAD_CONST', last))
@@ -550,11 +567,10 @@ def _gen_chain_get(original_code, root_var, keys, default):
         out.append(Instr('LOAD_CONST', default))
     else:
         out.append(Instr('LOAD_FAST', '_lp_chain'))
-        out.append(Instr('LOAD_METHOD', 'get'))
+        out.append(emit_load_method('get'))
         out.append(Instr('LOAD_CONST', last))
         out.append(Instr('LOAD_CONST', default))
-        out.append(Instr('PRECALL', 2))
-        out.append(Instr('CALL', 2))
+        out.extend(emit_call(2))
     out.append(Instr('JUMP_FORWARD', end))
     out.append(skip_last)
     out.append(Instr('LOAD_CONST', default))
@@ -566,14 +582,13 @@ def _build_index_guarded_code(original_code, idx_var, list_var, default):
     skip = Label()
     patch = [
         Instr('LOAD_FAST', idx_var),
-        Instr('LOAD_GLOBAL', (True, 'len')),
+        emit_load_global('len', push_null=True),
         Instr('LOAD_FAST', list_var),
-        Instr('PRECALL', 1),
-        Instr('CALL', 1),
+        *emit_call(1),
         Instr('COMPARE_OP', Compare.GE),
-        Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
-        Instr('LOAD_CONST', 0),
-        Instr('STORE_FAST', idx_var),
+        emit_jump_if_false(skip),
+        Instr('LOAD_CONST', default),
+        Instr('RETURN_VALUE'),
         skip
     ]
     idx = 0
@@ -589,13 +604,12 @@ def _build_file_guarded_code(original_code, path_var, default):
     bc = Bytecode.from_code(original_code)
     skip = Label()
     patch = [
-        Instr('LOAD_GLOBAL', (False, 'os')),
+        emit_load_global('os', push_null=False),
         Instr('LOAD_ATTR', 'path'),
-        Instr('LOAD_METHOD', 'exists'),
+        emit_load_method('exists'),
         Instr('LOAD_FAST', path_var),
-        Instr('PRECALL', 1),
-        Instr('CALL', 1),
-        Instr('POP_JUMP_FORWARD_IF_TRUE', skip),
+        *emit_call(1),
+        emit_jump_if_true(skip),
 
         Instr('LOAD_CONST', default),
         Instr('RETURN_VALUE'),
@@ -614,16 +628,14 @@ def _build_str_coerce_guarded_code(original_code, var_name):
     bc = Bytecode.from_code(original_code)
     skip = Label()
     patch = [
-        Instr('LOAD_GLOBAL', (True, 'isinstance')),
+        emit_load_global('isinstance', push_null=True),
         Instr('LOAD_FAST', var_name),
-        Instr('LOAD_GLOBAL', (False, 'str')),
-        Instr('PRECALL', 2),
-        Instr('CALL', 2),
-        Instr('POP_JUMP_FORWARD_IF_TRUE', skip),
-        Instr('LOAD_GLOBAL', (True, 'str')),
+        emit_load_global('str', push_null=False),
+        *emit_call(2),
+        emit_jump_if_true(skip),
+        emit_load_global('str', push_null=True),
         Instr('LOAD_FAST', var_name),
-        Instr('PRECALL', 1),
-        Instr('CALL', 1),
+        *emit_call(1),
         Instr('STORE_FAST', var_name),
         skip
     ]
@@ -641,15 +653,14 @@ def _build_callable_guarded_code(original_code, var_name, replacement_func):
     bc = Bytecode.from_code(original_code)
     skip = Label()
     patch = [
-        Instr('LOAD_GLOBAL', (False, var_name)),
+        emit_load_global(var_name, push_null=False),
         Instr('LOAD_CONST', None),
         Instr('COMPARE_OP', Compare.EQ),
-        Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+        emit_jump_if_false(skip),
 
-        Instr('LOAD_GLOBAL', (True, '__import__')),
+        emit_load_global('__import__', push_null=True),
         Instr('LOAD_CONST', 'sys'),
-        Instr('PRECALL', 1),
-        Instr('CALL', 1),
+        *emit_call(1),
         Instr('LOAD_ATTR', 'modules'),
         Instr('LOAD_CONST', 'codesuture.pattern_matcher'),
         Instr('BINARY_SUBSCR'),
@@ -675,22 +686,19 @@ def _build_type_coercion_guarded_code(original_code, var_name, default):
 
         skip2 = Label()
         patch = [
-            Instr('LOAD_GLOBAL', (True, 'isinstance')),
+            emit_load_global('isinstance', push_null=True),
             Instr('LOAD_FAST', var_name),
-            Instr('LOAD_GLOBAL', (False, 'str')),
-            Instr('PRECALL', 2),
-            Instr('CALL', 2),
-            Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+            emit_load_global('str', push_null=False),
+            *emit_call(2),
+            emit_jump_if_false(skip),
 
             Instr('LOAD_FAST', var_name),
-            Instr('LOAD_METHOD', 'lstrip'),
+            emit_load_method('lstrip'),
             Instr('LOAD_CONST', '-'),
-            Instr('PRECALL', 1),
-            Instr('CALL', 1),
-            Instr('LOAD_METHOD', 'isdigit'),
-            Instr('PRECALL', 0),
-            Instr('CALL', 0),
-            Instr('POP_JUMP_FORWARD_IF_TRUE', skip2),
+            *emit_call(1),
+            emit_load_method('isdigit'),
+            *emit_call(0),
+            emit_jump_if_true(skip2),
 
             Instr('LOAD_CONST', default),
             Instr('STORE_FAST', var_name),
@@ -704,7 +712,7 @@ def _build_type_coercion_guarded_code(original_code, var_name, default):
             Instr('LOAD_FAST', var_name),
             Instr('LOAD_CONST', None),
             Instr('IS_OP', 0),
-            Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+            emit_jump_if_false(skip),
             Instr('LOAD_CONST', default),
             Instr('STORE_FAST', var_name),
             skip
@@ -715,7 +723,7 @@ def _build_type_coercion_guarded_code(original_code, var_name, default):
             Instr('LOAD_FAST', var_name),
             Instr('LOAD_CONST', None),
             Instr('IS_OP', 0),
-            Instr('POP_JUMP_FORWARD_IF_FALSE', skip),
+            emit_jump_if_false(skip),
             Instr('LOAD_CONST', default),
             Instr('STORE_FAST', var_name),
             skip
@@ -745,7 +753,7 @@ def _build_return_guarded_code(original_code, default):
             new_instrs.append(Instr('COPY', 1))
             new_instrs.append(Instr('LOAD_CONST', None))
             new_instrs.append(Instr('IS_OP', 0))
-            new_instrs.append(Instr('POP_JUMP_FORWARD_IF_FALSE', skip))
+            new_instrs.append(emit_jump_if_false(skip))
             new_instrs.append(Instr('POP_TOP'))
             new_instrs.append(Instr('LOAD_CONST', default))
             new_instrs.append(skip)

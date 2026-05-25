@@ -1,12 +1,14 @@
 
 import sys
+import threading
 import traceback
 
 class CodeSutureMiddleware:
 
     def __init__(self, app):
         self.app = app
-        self._retried_exc_types = set()  
+        self._retried_exc_ids = set()
+        self._lock = threading.Lock()
 
     def __call__(self, environ, start_response):
 
@@ -19,9 +21,6 @@ class CodeSutureMiddleware:
 
         exc_type = type(exc)
 
-        if exc_type in self._retried_exc_types:
-            raise exc
-
         tb = sys.exc_info()[2]
         if tb is None:
             raise exc
@@ -30,6 +29,11 @@ class CodeSutureMiddleware:
         while inner_tb.tb_next:
             inner_tb = inner_tb.tb_next
         frame = inner_tb.tb_frame
+
+        exc_id = (exc_type, frame.f_code.co_filename, frame.f_code.co_name)
+        with self._lock:
+            if exc_id in self._retried_exc_ids:
+                raise exc
 
         try:
             from codesuture.pattern_matcher import analyze_exception
@@ -53,7 +57,8 @@ class CodeSutureMiddleware:
             if spec.key_name:
                 target_name = spec.key_name if isinstance(spec.key_name, str) else spec.key_name[-1]
 
-            self._retried_exc_types.add(exc_type)
+            with self._lock:
+                self._retried_exc_ids.add(exc_id)
 
             try:
                 patched_start_called = []
