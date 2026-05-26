@@ -96,6 +96,33 @@ class TestRollbackFunction:
         captured = capsys.readouterr()
         assert "Nothing to roll back" in captured.out or "No patch found" in captured.out
 
+    def test_syncs_lifecycle_state(self, clean_env):
+        """Rollback must mark lifecycle state as ROLLED_BACK."""
+        from codesuture.lifecycle import LifecycleManager, PatchState
+
+        func, code_obj, spec = _make_func_with_spec()
+        save_patch(func, code_obj, spec)
+
+        # Track in lifecycle
+        lm = LifecycleManager(store_dir=str(clean_env / '.codesuture_incidents'))
+        func_name = func.__qualname__.replace("<", "_").replace(">", "_")
+        lm.track('test_module', func_name, 'null_guard',
+                 state=PatchState.PATCHED)
+
+        # Verify it's tracked as PATCHED
+        patches = lm.get_by_function(func_name)
+        assert len(patches) > 0
+        assert patches[0].current_state == PatchState.PATCHED
+
+        # Rollback
+        rollback_function(func_name)
+
+        # Reload and verify state is ROLLED_BACK
+        lm2 = LifecycleManager(store_dir=str(clean_env / '.codesuture_incidents'))
+        patches = lm2.get_by_function(func_name)
+        assert len(patches) > 0
+        assert patches[0].current_state == PatchState.ROLLED_BACK
+
 
 # ---------------------------------------------------------------------------
 # rollback_all

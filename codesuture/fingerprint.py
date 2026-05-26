@@ -32,7 +32,8 @@ def save_registry(registry: dict):
             json.dump(registry, f, indent=2)
 
 def lookup(fingerprint: str) -> dict | None:
-    return load_registry().get(fingerprint)
+    with _registry_lock:
+        return load_registry().get(fingerprint)
 
 def record(fingerprint: str, guard_type: str, target: str,
            func_name: str, error_type: str, default_value=None, key_name=None):

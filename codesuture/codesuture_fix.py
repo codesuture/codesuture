@@ -79,7 +79,7 @@ def apply_fix(exc_type_name: str = None, exc_msg: str = None) -> str:
         new_bc = synthesize_guarded_code(target_frame.f_code, spec)
         new_code = new_bc.to_code()
         replace_function_code(func, new_code)
-        rewind_frame_to_start(target_frame, target_frame.f_code)
+        rewind_frame_to_start(target_frame, new_code)
         return f"OK: patched {target_frame.f_code.co_name} ({spec.strategy} on {spec.var_name})"
     except Exception as e:
         return f"ERROR: {e}"

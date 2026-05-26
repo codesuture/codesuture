@@ -98,6 +98,8 @@ def _load_cached_code(module_name, func_name):
                 patch_data = json.load(f)
             stored_hash = patch_data.get("code_sha256")
             patched_at = datetime.fromisoformat(patch_data["patched_at"])
+            if patched_at.tzinfo is None:
+                patched_at = patched_at.replace(tzinfo=timezone.utc)
             ttl_days = patch_data.get("ttl_days", 7)
             age_days = (datetime.now(timezone.utc) - patched_at).days
             if age_days > ttl_days:

@@ -2,13 +2,17 @@ include pyproject.toml
 include README.md
 include CHANGELOG.md
 include LICENSE
-include .gitignore
+include requirements.txt
 
 recursive-include codesuture *.py
-recursive-include tests *.py
+recursive-include assets *.png
 
-exclude codesuture_verify*.py
-exclude livepatch_verify*.py
-exclude realbugg.py
-exclude real.py
+# Exclude dev-only files from pip sdist
+prune stress
+prune .codesuture_store
+prune .codesuture_incidents
+prune .codesuture_alerts
+exclude .gitignore
+exclude ROADMAP.md
+exclude *.debug.py
 exclude *.zip

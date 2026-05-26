@@ -3,7 +3,7 @@ import sys
 import os
 import tempfile
 
-def test_fix(original_script_path, module_name, func_name, new_source, exc_type_name):
+def verify_fix(original_script_path, module_name, func_name, new_source, exc_type_name):
     print(f"[CodeSuture Sandbox] Testing fix for {module_name}.{func_name}...")
 
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".py", encoding='utf-8') as f:

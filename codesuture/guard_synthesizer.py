@@ -172,8 +172,12 @@ def synthesize_guarded_code(original_code, spec: PatchSpec) -> Bytecode:
             res = _build_attr_null_guarded_code(original_code, spec.var_name, spec.key_name, spec.default_value)
         else:
             res = _build_null_guarded_code(original_code, spec.var_name, spec.default_value)
-    elif spec.strategy in ('index_guard', 'list_bound_guard'):
+    elif spec.strategy == 'index_guard':
         res = _build_index_guarded_code(original_code, spec.var_name, spec.list_len_var, spec.default_value)
+    elif spec.strategy == 'list_bound_guard':
+        # var_name = the list variable, key_name = (const_int_index,)
+        const_idx = spec.key_name[0] if spec.key_name else 0
+        res = _build_list_bound_guarded_code(original_code, spec.var_name, const_idx, spec.default_value)
     elif spec.strategy == 'file_guard':
         res = _build_file_guarded_code(original_code, spec.var_name, spec.default_value)
     elif spec.strategy == 'str_coerce_guard':
@@ -390,7 +394,7 @@ def _build_division_guarded_code(original_code, var_name, default):
             skip = Label()
             new_instrs.append(Instr('COPY', 1))
             new_instrs.append(Instr('LOAD_CONST', 0))
-            new_instrs.append(Instr('COMPARE_OP', Compare.GT))
+            new_instrs.append(Instr('COMPARE_OP', Compare.NE))
             new_instrs.append(emit_jump_if_true(skip))
             new_instrs.append(Instr('POP_TOP'))
             new_instrs.append(Instr('LOAD_CONST', default))
@@ -591,14 +595,73 @@ def _build_index_guarded_code(original_code, idx_var, list_var, default):
         Instr('RETURN_VALUE'),
         skip
     ]
-    idx = 0
+    # Insert the guard AFTER both idx_var and list_var are assigned.
+    # We must find the LAST store of either variable — whichever comes later
+    # in the bytecode — so that both are bound when the guard executes.
+    # If a variable is a parameter it has no STORE_FAST; treat its "last store"
+    # position as -1 (already assigned at function entry, any position is fine).
+    last_store_idx_var = -1
+    last_store_list_var = -1
     for i, instr in enumerate(bc):
-        if isinstance(instr, Instr) and instr.name == 'RESUME':
-            idx = i + 1
-            break
+        if isinstance(instr, Instr) and instr.name == 'STORE_FAST':
+            if instr.arg == idx_var:
+                last_store_idx_var = i
+            elif instr.arg == list_var:
+                last_store_list_var = i
+
+    last_store = max(last_store_idx_var, last_store_list_var)
+    if last_store >= 0:
+        insert_idx = last_store + 1
+    else:
+        # Both are parameters — insert right after RESUME
+        insert_idx = 0
+        for i, instr in enumerate(bc):
+            if isinstance(instr, Instr) and instr.name == 'RESUME':
+                insert_idx = i + 1
+                break
     for instr in reversed(patch):
-        bc.insert(idx, instr)
+        bc.insert(insert_idx, instr)
     return bc
+
+def _build_list_bound_guarded_code(original_code, list_var, const_idx, default):
+    """Guard for list[const_int] — e.g. parts[5].
+
+    Inserts: if len(list_var) <= const_idx: return default
+    right after list_var is assigned (STORE_FAST list_var), guaranteeing
+    list_var is bound before the guard executes. The constant index is embedded
+    directly as a LOAD_CONST so no variable-binding issues are possible.
+    """
+    bc = Bytecode.from_code(original_code)
+    skip = Label()
+    patch = [
+        emit_load_global('len', push_null=True),
+        Instr('LOAD_FAST', list_var),
+        *emit_call(1),
+        Instr('LOAD_CONST', const_idx),
+        Instr('COMPARE_OP', Compare.GT),   # len(list) > const_idx means index is safe
+        emit_jump_if_true(skip),            # skip guard body if safe
+        Instr('LOAD_CONST', default),
+        Instr('RETURN_VALUE'),
+        skip,
+    ]
+    # Insert right after the last STORE_FAST for list_var so it's bound.
+    # If list_var is a parameter (no STORE_FAST), insert after RESUME.
+    insert_idx = 0
+    last_store = -1
+    for i, instr in enumerate(bc):
+        if isinstance(instr, Instr) and instr.name == 'STORE_FAST' and instr.arg == list_var:
+            last_store = i
+    if last_store >= 0:
+        insert_idx = last_store + 1
+    else:
+        for i, instr in enumerate(bc):
+            if isinstance(instr, Instr) and instr.name == 'RESUME':
+                insert_idx = i + 1
+                break
+    for instr in reversed(patch):
+        bc.insert(insert_idx, instr)
+    return bc
+
 
 def _build_file_guarded_code(original_code, path_var, default):
     bc = Bytecode.from_code(original_code)
@@ -615,13 +678,20 @@ def _build_file_guarded_code(original_code, path_var, default):
         Instr('RETURN_VALUE'),
         skip
     ]
-    idx = 0
+    # Find the last STORE_FAST for path_var — insert guard right after it
+    insert_idx = None
     for i, instr in enumerate(bc):
-        if isinstance(instr, Instr) and instr.name == 'RESUME':
-            idx = i + 1
-            break
+        if isinstance(instr, Instr) and instr.name == 'STORE_FAST' and instr.arg == path_var:
+            insert_idx = i + 1
+    if insert_idx is None:
+        # Fallback: path_var might be a parameter, insert after RESUME
+        insert_idx = 0
+        for i, instr in enumerate(bc):
+            if isinstance(instr, Instr) and instr.name == 'RESUME':
+                insert_idx = i + 1
+                break
     for instr in reversed(patch):
-        bc.insert(idx, instr)
+        bc.insert(insert_idx, instr)
     return bc
 
 def _build_str_coerce_guarded_code(original_code, var_name):
@@ -639,13 +709,21 @@ def _build_str_coerce_guarded_code(original_code, var_name):
         Instr('STORE_FAST', var_name),
         skip
     ]
-    idx = 0
+    # Find the last STORE_FAST for var_name — insert guard right after it
+    # so the variable is guaranteed to be assigned before we check its type
+    insert_idx = None
     for i, instr in enumerate(bc):
-        if isinstance(instr, Instr) and instr.name == 'RESUME':
-            idx = i + 1
-            break
+        if isinstance(instr, Instr) and instr.name == 'STORE_FAST' and instr.arg == var_name:
+            insert_idx = i + 1
+    if insert_idx is None:
+        # Fallback: var_name might be a parameter, insert after RESUME
+        insert_idx = 0
+        for i, instr in enumerate(bc):
+            if isinstance(instr, Instr) and instr.name == 'RESUME':
+                insert_idx = i + 1
+                break
     for instr in reversed(patch):
-        bc.insert(idx, instr)
+        bc.insert(insert_idx, instr)
     return bc
 
 def _build_callable_guarded_code(original_code, var_name, replacement_func):

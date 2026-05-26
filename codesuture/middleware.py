@@ -30,7 +30,7 @@ class CodeSutureMiddleware:
             inner_tb = inner_tb.tb_next
         frame = inner_tb.tb_frame
 
-        exc_id = (exc_type, frame.f_code.co_filename, frame.f_code.co_name)
+        exc_id = (exc_type.__name__, frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
         with self._lock:
             if exc_id in self._retried_exc_ids:
                 raise exc

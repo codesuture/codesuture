@@ -2,25 +2,18 @@ import os
 import json
 import sys
 from datetime import datetime, timezone
+from codesuture.utils import find_patch_store, load_all_patches
+
 
 def run_audit(patch_store_path: str = None):
 
-    candidates = [
-        ".codesuture_cache", ".codesuture_store",
-        ".codesuture", "codesuture_patches"
-    ]
-    store = patch_store_path
-    if not store:
-        for c in candidates:
-            if os.path.exists(c):
-                store = c
-                break
+    store = find_patch_store(patch_store_path)
 
     if not store:
         print("[CodeSuture] No patch store found. Nothing has been patched yet.")
         return
 
-    patches = _load_all_patches(store)
+    patches = load_all_patches(store)
 
     if not patches:
         print("[CodeSuture] Patch store exists but is empty.")
@@ -74,6 +67,8 @@ def run_audit(patch_store_path: str = None):
         if "patched_at" in p:
             try:
                 dt = datetime.fromisoformat(p["patched_at"])
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
                 days = (now - dt).days
                 oldest_days = max(oldest_days, days)
                 age_str = f"{days}d"
@@ -93,32 +88,3 @@ def run_audit(patch_store_path: str = None):
     print("  Run 'codesuture rollback <function_name>' to remove a patch.")
     print("  Run 'codesuture rollback --all' to clear everything.")
     print()
-
-def _load_all_patches(store_path: str) -> list[dict]:
-
-    patches = []
-    if os.path.isdir(store_path):
-        for root, dirs, files in os.walk(store_path):
-            for fname in files:
-                fpath = os.path.join(root, fname)
-                if fname.endswith(".json") and os.path.isfile(fpath):
-                    try:
-                        with open(fpath, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                patches.extend(data)
-                            elif isinstance(data, dict):
-                                patches.append(data)
-                    except Exception:
-                        pass
-    elif os.path.isfile(store_path):
-        try:
-            with open(store_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    patches = data
-                elif isinstance(data, dict):
-                    patches = list(data.values())
-        except Exception:
-            pass
-    return patches

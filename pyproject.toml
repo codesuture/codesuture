@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codesuture"
-version = "0.7.3"
+version = "1.0.0"
 description = "Runtime Python bytecode patcher with guard knowledge base, persistence, and self-healing re-execution"
 readme = "README.md"
 license = "MIT"
@@ -26,6 +26,7 @@ dependencies = [
 
 [project.optional-dependencies]
 autonomous = ["llama-cpp-python"]
+test = ["pytest>=7.0", "pytest-asyncio"]
 
 [project.scripts]
 codesuture = "codesuture.cli:main"
@@ -35,3 +36,9 @@ codesuture = "codesuture.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["codesuture*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

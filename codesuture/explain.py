@@ -3,24 +3,18 @@ import os
 import json
 import sys
 from datetime import datetime, timezone
+from codesuture.utils import find_patch_store, load_all_patches
+
 
 def run_explain(func_name=None):
 
-    candidates = [
-        ".codesuture_cache", ".codesuture_store",
-        ".codesuture", "codesuture_patches",
-    ]
-    store = None
-    for c in candidates:
-        if os.path.exists(c):
-            store = c
-            break
+    store = find_patch_store()
 
     if not store:
         print("[CodeSuture] No active patches.")
         return
 
-    patches = _load_all_patches(store)
+    patches = load_all_patches(store)
 
     if not patches:
         print("[CodeSuture] No active patches.")
@@ -83,6 +77,8 @@ def run_explain(func_name=None):
         if "patched_at" in p:
             try:
                 dt = datetime.fromisoformat(p["patched_at"])
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
                 days = (now - dt).days
                 age_str = f"{days}d ago (patched)"
             except Exception:
@@ -116,32 +112,3 @@ def _assess_safety(patch_data):
         return "LIKELY"
 
     return "UNKNOWN"
-
-def _load_all_patches(store_path):
-
-    patches = []
-    if os.path.isdir(store_path):
-        for root, dirs, files in os.walk(store_path):
-            for fname in files:
-                fpath = os.path.join(root, fname)
-                if fname.endswith(".json") and os.path.isfile(fpath):
-                    try:
-                        with open(fpath, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                patches.extend(data)
-                            elif isinstance(data, dict):
-                                patches.append(data)
-                    except Exception:
-                        pass
-    elif os.path.isfile(store_path):
-        try:
-            with open(store_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    patches = data
-                elif isinstance(data, dict):
-                    patches = list(data.values())
-        except Exception:
-            pass
-    return patches

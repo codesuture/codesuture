@@ -219,12 +219,11 @@ def _infer_subscript_default(instructions=None, crash_idx=None):
                     if instructions[k].opname == 'LOAD_GLOBAL' and \
                        instructions[k].argval in ('int', 'float'):
                         return 0
+                continue  # keep scanning past non-int/float CALL opcodes
             elif instr.opname in ('LIST_APPEND', 'STORE_SUBSCR'):
                 return None
             elif instr.opname in TERMINATOR_OPCODES:
                 break
-            elif instr.opname in CALL_OPCODES:
-                continue
             else:
                 break
     return None
@@ -505,6 +504,19 @@ def _index_bound_spec(frame):
     if tgt is None or tgt.opname not in SUBSCRIPT_OPCODES:
         return None
     idx_instr = instructions.index(tgt)
+
+    # ── Case 1: list[const_int]  e.g. parts[5]
+    # Pattern: LOAD_FAST <list>  LOAD_CONST <int>  BINARY_SUBSCR
+    if (idx_instr >= 2
+            and instructions[idx_instr - 1].opname == 'LOAD_CONST'
+            and isinstance(instructions[idx_instr - 1].argval, int)
+            and instructions[idx_instr - 2].opname in ('LOAD_FAST', 'LOAD_DEREF')):
+        const_idx = instructions[idx_instr - 1].argval
+        list_var = frame.f_code.co_varnames[instructions[idx_instr - 2].arg]
+        default = _infer_subscript_default(instructions, idx_instr)
+        return PatchSpec('list_bound_guard', list_var, default, key_name=(const_idx,))
+
+    # ── Case 2: multi-level chain with LOAD_CONST keys  e.g. data['key'][i]
     if idx_instr > 0 and instructions[idx_instr - 1].opname == 'LOAD_CONST':
         chain = []
         pos = idx_instr
@@ -526,13 +538,16 @@ def _index_bound_spec(frame):
                 key_name=tuple(chain),
             )
 
-    loads = []
-    for i in range(idx_instr-1, -1, -1):
+    # ── Case 3: list[idx_var]  e.g. parts[i]  — both operands are LOAD_FAST
+    # Scan backward from BINARY_SUBSCR to find list_var and idx_var
+    load_fasts = []
+    for i in range(idx_instr - 1, -1, -1):
         if instructions[i].opname in ('LOAD_FAST', 'LOAD_DEREF'):
-            loads.append(frame.f_code.co_varnames[instructions[i].arg])
-            if len(loads) == 2:
+            load_fasts.append(frame.f_code.co_varnames[instructions[i].arg])
+            if len(load_fasts) == 2:
                 break
-    if len(loads) < 2:
+    if len(load_fasts) < 2:
+        # Only one LOAD_FAST found — try chain subscript path
         chain = []
         pos = idx_instr
         while pos >= 2 and instructions[pos].opname in SUBSCRIPT_OPCODES:
@@ -556,9 +571,11 @@ def _index_bound_spec(frame):
             _infer_subscript_default(instructions, idx_instr),
             key_name=tuple(chain),
         )
-    list_var, idx_var = loads[1], loads[0]
+    # load_fasts[0] = idx_var (the variable used as index), [1] = list_var
+    list_var, idx_var = load_fasts[1], load_fasts[0]
     inferred_default = _infer_default(idx_var, instructions, idx_instr)
     return PatchSpec('index_guard', idx_var, inferred_default, list_len_var=list_var)
+
 
 def _dict_get_spec(frame, msg):
     match = re.search(r"KeyError\: '(\w+)'", msg)
@@ -598,6 +615,22 @@ def _str_concat_spec(frame, msg):
     return None
 
 def _file_guard_spec(frame):
+    """Build a PatchSpec for FileNotFoundError.
+
+    NOTE: In practice this function always returns None when called from
+    the tracer or ASGI middleware, because open() is a C builtin. When
+    open() throws FileNotFoundError, frame.f_lasti points to the CALL
+    instruction in the *calling* Python frame, and _find_target_instr
+    finds that CALL — but the LOAD_FAST scan backwards looks for the
+    path variable, which may or may not be the instruction immediately
+    before the CALL (e.g., if open() was called with keyword args or
+    through a wrapper). This makes file_guard unreachable via normal
+    crash interception.
+
+    The file_guard handling in guard_synthesizer, severity classifier,
+    and suggest engine is only reachable via explicit PatchSpec creation
+    (tests, autonomous mode, or learned rules).
+    """
     instructions = list(dis.get_instructions(frame.f_code))
     tgt = _find_target_instr(instructions, frame.f_lasti)
     if tgt is None:

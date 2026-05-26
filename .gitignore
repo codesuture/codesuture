@@ -27,6 +27,8 @@ venv/
 # ---------------------------
 .codesuture_store/
 .codesuture_cache/
+.codesuture_incidents/
+.codesuture_alerts/
 .livepatch_cache/
 .codesuture_fingerprints
 .models/
@@ -40,6 +42,12 @@ htmlcov/
 *.log
 
 # ---------------------------
+# Stress tests & debug scripts (dev-only)
+# ---------------------------
+stress/
+*.debug.py
+
+# ---------------------------
 # Planning & roadmap (local only)
 # ---------------------------
 ROADMAP.md
@@ -48,6 +56,6 @@ task.md
 walkthrough.md
 
 # ---------------------------
-# Old verification suites (deleted)
+# Old verification suites
 # ---------------------------
 v4test/

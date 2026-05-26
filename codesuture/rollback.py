@@ -25,12 +25,15 @@ def rollback_runtime(name):
             # The patched code replaced the original, so we look for functions
             # with a code object named `name`
             import sys
+            import warnings
             for mod in list(sys.modules.values()):
                 if mod is None:
                     continue
                 for attr_name in dir(mod):
                     try:
-                        obj = getattr(mod, attr_name)
+                        with warnings.catch_warnings():
+                            warnings.simplefilter('ignore', DeprecationWarning)
+                            obj = getattr(mod, attr_name)
                     except Exception:
                         continue
                     if isinstance(obj, types.FunctionType) and obj.__code__.co_name == name:
@@ -106,6 +109,12 @@ def rollback_function(name):
             removed += 1
 
     if removed > 0:
+        # Sync lifecycle state so lifecycle show/stale/digest are accurate
+        try:
+            from codesuture.lifecycle import LifecycleManager
+            LifecycleManager().mark_rolled_back(name)
+        except Exception:
+            pass  # Lifecycle tracking is optional
         print(f"[CodeSuture] Rolled back patch for '{name}'. "
               f"Run your script again to re-patch if needed.")
     else:
@@ -123,6 +132,17 @@ def rollback_all():
     else:
         print("[CodeSuture] Nothing to roll back.")
         return
+
+    # Sync lifecycle state for all tracked patches
+    try:
+        from codesuture.lifecycle import LifecycleManager, PatchState
+        lm = LifecycleManager()
+        for p in lm.get_all():
+            if p.current_state not in (PatchState.FIXED, PatchState.ROLLED_BACK, PatchState.EXPIRED):
+                p.transition_to(PatchState.ROLLED_BACK, 'rollback --all')
+        lm._save()
+    except Exception:
+        pass  # Lifecycle tracking is optional
 
     fp = ".codesuture_fingerprints"
     if os.path.isfile(fp):
@@ -155,6 +175,8 @@ def rollback_dry_run():
             age = "?"
             if "patched_at" in data:
                 dt = datetime.fromisoformat(data["patched_at"])
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
                 age = f"{(now - dt).days}d"
             print(f"    - {func}  guard={guard}  age={age}")
         except Exception:

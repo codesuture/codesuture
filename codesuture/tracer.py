@@ -2,7 +2,8 @@ import sys
 import types
 import os
 import json
-from datetime import datetime
+import traceback as _traceback_mod
+from datetime import datetime, timezone
 from codesuture.pattern_matcher import analyze_exception
 from codesuture.guard_synthesizer import synthesize_guarded_code, _force_despecialize
 from codesuture.code_replacer import replace_function_code, get_function_from_frame
@@ -48,26 +49,46 @@ class CodeSutureTracer:
         self.shadow_mode = shadow
         self.ttl = ttl
         self.silent = silent
-        self._patched_codes = {}  
-        self.attempts = {}  
+        self._patched_codes = {}
+        self.attempts = {}
         self.stats = {
             "patched": 0,
             "dry_run_suggestions": 0,
             "self_healed": 0
         }
-        self.patched_signatures = {}  
+        self.patched_signatures = {}
         self._handled_exc_ids = set()
         self._rewound_exc_ids = set()
         self._patch_lock = threading.Lock()
+        self._state_lock = threading.Lock()  # protects stats, attempts, exc_id sets, patched_codes reads
         self._thread_state = threading.local()
 
+        # Phase 3+4: Incident Intelligence + Alert System
+        try:
+            from codesuture.incidents.incident_log import IncidentLogger
+            from codesuture.alerts.router import AlertRouter
+            self._incident_logger = IncidentLogger()
+            self._alert_router = AlertRouter()
+        except Exception:
+            self._incident_logger = None
+            self._alert_router = None
+
+        # Phase 8: Lifecycle tracking
+        try:
+            from codesuture.lifecycle import LifecycleManager
+            self._lifecycle_mgr = LifecycleManager()
+        except Exception:
+            self._lifecycle_mgr = None
+
     def __call__(self, frame, event, arg):
-        if event == 'return' and self.shadow_mode and frame.f_code in self._patched_codes:
-            from codesuture.shadow import shadow_check
-            func_name = frame.f_code.co_name
-            guard_type = self._patched_codes[frame.f_code]
-            shadow_check(func_name, arg, guard_type)
-            return self
+        if event == 'return' and self.shadow_mode:
+            with self._state_lock:
+                guard_type = self._patched_codes.get(frame.f_code)
+            if guard_type is not None:
+                from codesuture.shadow import shadow_check
+                func_name = frame.f_code.co_name
+                shadow_check(func_name, arg, guard_type)
+                return self
 
         if event == 'exception':
             exc_type, exc_value, exc_tb = arg
@@ -124,8 +145,9 @@ class CodeSutureTracer:
             pass
 
         exc_id = id(exc_value)
-        if exc_id in self._handled_exc_ids:
-            return
+        with self._state_lock:
+            if exc_id in self._handled_exc_ids:
+                return
 
         spec = None
         from codesuture.fingerprint import compute_fingerprint, lookup, record
@@ -173,7 +195,7 @@ class CodeSutureTracer:
             import traceback
             from codesuture.code_replacer import get_source_from_frame
             from codesuture.plugins.autonomous import propose_fix
-            from codesuture.sandbox import test_fix
+            from codesuture.sandbox import verify_fix
             from codesuture.knowledge import save_learned_rule
             from codesuture.pattern_matcher import PatchSpec
 
@@ -184,7 +206,7 @@ class CodeSutureTracer:
 
             module_name = getattr(func, '__module__', '__main__')
 
-            if test_fix(self.script_path, module_name, func_name, new_source, exc_type.__name__):
+            if verify_fix(self.script_path, module_name, func_name, new_source, exc_type.__name__):
                 if not self.silent:
                     print(f"[CodeSuture] LLM fix PASSED sandbox. Learning rule for {func_name}.")
                 save_learned_rule(exc_type.__name__, str(exc_value), func_name, new_source)
@@ -201,18 +223,18 @@ class CodeSutureTracer:
             return
 
         key = (id(frame.f_code), frame.f_lasti)
-        tries = self.attempts.get(key, 0)
-        if tries >= self.max_retries:
-            print(f"[CodeSuture] Max retries ({self.max_retries}) reached at "
-                  f"{frame.f_code.co_name}:{frame.f_lineno}, giving up.")
-            return
-
-        self.attempts[key] = tries + 1
+        with self._state_lock:
+            tries = self.attempts.get(key, 0)
+            if tries >= self.max_retries:
+                print(f"[CodeSuture] Max retries ({self.max_retries}) reached at "
+                      f"{frame.f_code.co_name}:{frame.f_lineno}, giving up.")
+                return
+            self.attempts[key] = tries + 1
 
         _thread_name = thread.name if thread is not None else None
 
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "function": frame.f_code.co_name,
             "filename": frame.f_code.co_filename,
             "lineno": frame.f_lineno,
@@ -244,7 +266,7 @@ class CodeSutureTracer:
                     if _os.path.isfile(fp_file):
                         with open(fp_file, "r", encoding="utf-8") as fpf:
                             fp_data = json.load(fpf)
-                        count = fp_data.get(fp, {}).get("count", 1) if isinstance(fp_data.get(fp), dict) else 1
+                        count = fp_data.get(fp, {}).get("hit_count", 1) if isinstance(fp_data.get(fp), dict) else 1
                     else:
                         count = 0
                 except Exception:
@@ -265,19 +287,22 @@ class CodeSutureTracer:
                 print(f"  Default value: {repr(spec.default_value)}")
                 print(f"  Guard type: {spec.strategy}")
             self._log(entry)
-            self.stats["dry_run_suggestions"] += 1
+            with self._state_lock:
+                self.stats["dry_run_suggestions"] += 1
             return
         else:
             if not self.silent:
                 print(f"[CodeSuture] Caught {exc_type.__name__}: {exc_value}")
 
             sig = (spec.var_name, spec.key_name, spec.strategy, exc_type.__name__)
-            is_reuse = sig in self.patched_signatures
+            with self._state_lock:
+                is_reuse = sig in self.patched_signatures
+                if is_reuse:
+                    spec = self.patched_signatures[sig]
 
             if is_reuse:
                 if not self.silent:
-                    print(f"[CodeSuture] Reusing existing patch for '{display_name}' in {frame.f_code.co_name}()")
-                spec = self.patched_signatures[sig]
+                    print(f"[CodeSuture] Reusing cached patch for {display_name}.")
 
             if not cached:
                 if not self.silent:
@@ -326,17 +351,23 @@ class CodeSutureTracer:
 
                 entry["action"] = "applied"
                 self._log(entry)
-                self.stats["patched"] += 1
-                self._handled_exc_ids.add(exc_id)
+                with self._state_lock:
+                    self.stats["patched"] += 1
+                    self._handled_exc_ids.add(exc_id)
                 if not self.silent:
                     print(f"[CodeSuture] Patch applied to {getattr(func, '__name__', 'unknown')}().")
+
+                # Log incident
+                self._log_incident(
+                    frame=frame, exc_type=exc_type, exc_value=exc_value,
+                    exc_tb=exc_tb, spec=spec, status='patched',
+                    fingerprint=fp, func=func,
+                )
                 if self._arm_http_transaction_replay(frame, func, exc_id, spec, display_name):
                     return
                 if func is not None and not self._is_uninvokable(func, frame):
                     with self._patch_lock:
                         try:
-                            if self.dry_run:
-                                return
                             patched_code = new_code
                             if getattr(func, "__code__", None) is not patched_code:
                                 func.__code__ = patched_code
@@ -414,7 +445,8 @@ class CodeSutureTracer:
             new_code = new_bc.to_code()
             replace_function_code(func, new_code)
             _force_despecialize(func)
-            self.stats["patched"] += 1
+            with self._state_lock:
+                self.stats["patched"] += 1
             if not self.silent:
                 print(f"[CodeSuture]   Self-healed {func.__name__}().")
 
@@ -496,6 +528,120 @@ class CodeSutureTracer:
                 json.dump(entry, f, default=str)
                 f.write('\n')
 
+    def _log_incident(self, frame, exc_type, exc_value, exc_tb, spec, status,
+                      fingerprint='', func=None, http_method=''):
+        """Create and log a structured incident record."""
+        if self._incident_logger is None:
+            return
+        try:
+            import threading
+            from codesuture.incidents.incident import IncidentRecord, IncidentStatus
+            from codesuture.incidents.severity import classify_severity
+
+            func_name = getattr(func, '__qualname__', '') or getattr(func, '__name__', '') or frame.f_code.co_name
+            module = getattr(func, '__module__', '') or '__main__'
+
+            # Compute fingerprint hit count
+            hit_count = 0
+            if fingerprint:
+                from codesuture.fingerprint import lookup
+                cached = lookup(fingerprint)
+                if cached:
+                    hit_count = cached.get('count', 1) if isinstance(cached, dict) else 1
+
+            severity = classify_severity(
+                guard_type=spec.strategy,
+                module=module,
+                function=func_name,
+                http_method=http_method,
+                hit_count=hit_count,
+                default_value=spec.default_value,
+            )
+
+            # Build stack trace
+            stack_lines = []
+            try:
+                if exc_tb:
+                    stack_lines = _traceback_mod.format_tb(exc_tb)
+            except Exception:
+                pass
+
+            # Map status string to enum
+            try:
+                inc_status = IncidentStatus(status)
+            except ValueError:
+                inc_status = IncidentStatus.PATCHED
+
+            from codesuture import __version__
+            incident = IncidentRecord(
+                fingerprint=fingerprint or '',
+                exception_type=exc_type.__name__,
+                exception_message=str(exc_value),
+                module=module,
+                function=func_name,
+                line_number=frame.f_lineno,
+                file_path=frame.f_code.co_filename,
+                stack_trace=stack_lines,
+                severity=severity,
+                status=inc_status,
+                guard_type=spec.strategy,
+                target_variable=spec.var_name or '',
+                default_value=spec.default_value,
+                codesuture_version=__version__,
+                ttl_days=self.ttl,
+                hit_count=hit_count,
+                thread_name=threading.current_thread().name,
+            )
+
+            # Phase 5: Generate source-level fix suggestion
+            try:
+                from codesuture.suggest import generate_suggestion
+                suggestion = generate_suggestion(incident)
+                if suggestion:
+                    incident.suggested_fix = suggestion.diff
+                    incident.fix_confidence = suggestion.confidence
+            except Exception:
+                pass
+
+            self._incident_logger.log_incident(incident)
+
+            # Route through alert system
+            if self._alert_router is not None:
+                self._alert_router.route(incident)
+
+            # Phase 8: Track lifecycle state
+            if self._lifecycle_mgr is not None:
+                try:
+                    from codesuture.lifecycle import PatchState
+                    state_map = {
+                        'patched': PatchState.PATCHED,
+                        'replayed': PatchState.REPLAYED,
+                        'persisted': PatchState.PERSISTED,
+                    }
+                    lf_state = state_map.get(status, PatchState.PATCHED)
+                    self._lifecycle_mgr.track(
+                        module=module,
+                        function=func_name,
+                        guard_type=spec.strategy,
+                        state=lf_state,
+                        ttl_days=self.ttl,
+                        reason=f"{exc_type.__name__}: {str(exc_value)[:80]}",
+                    )
+                    # If suggestion was generated, advance to SUGGESTED
+                    if incident.suggested_fix:
+                        self._lifecycle_mgr.track(
+                            module=module,
+                            function=func_name,
+                            guard_type=spec.strategy,
+                            state=PatchState.SUGGESTED,
+                        )
+                except Exception:
+                    pass
+
+        except Exception:
+            # Never let incident logging crash the tracer
+            pass
+
     def _is_http_handler_frame(self, frame):
         handler = frame.f_locals.get('self')
         if handler is None or not frame.f_code.co_name.startswith('do_'):
@@ -516,7 +662,8 @@ class CodeSutureTracer:
         self._thread_state.http_replay_func_name = getattr(func, '__name__', 'unknown')
         self._thread_state.http_replay_patch_spec = spec
         self._thread_state.http_replay_patch_target = target_name
-        self._rewound_exc_ids.add(exc_id)
+        with self._state_lock:
+            self._rewound_exc_ids.add(exc_id)
         if not self.silent:
             print(f"[CodeSuture] Transaction replay armed for {getattr(func, '__name__', 'unknown')}().")
         return True
@@ -568,17 +715,18 @@ class CodeSutureTracer:
                 return
             import json as _json
             body = _json.dumps({'error': 'CodeSuture patched this endpoint. Retry for a healed response.', 'patched': True})
-            raw = (
+            body_bytes = body.encode('utf-8')
+            header = (
                 'HTTP/1.0 500 Internal Server Error\r\n'
                 'Content-Type: application/json\r\n'
-                f'Content-Length: {len(body)}\r\n'
+                f'Content-Length: {len(body_bytes)}\r\n'
                 'X-CodeSuture: fallback=1\r\n'
                 'Connection: close\r\n'
                 '\r\n'
-                f'{body}'
             )
-            sock.sendall(raw.encode())
-            self._rewound_exc_ids.add(exc_id)
+            sock.sendall(header.encode('utf-8') + body_bytes)
+            with self._state_lock:
+                self._rewound_exc_ids.add(exc_id)
             if not self.silent:
                 print(f"[CodeSuture] Transaction fallback: sent graceful 500 for {getattr(func, '__name__', 'unknown')}().")
             raise _CodeSutureFallbackSuppression()

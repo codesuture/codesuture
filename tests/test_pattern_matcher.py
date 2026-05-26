@@ -78,18 +78,37 @@ def test_analyze_zero_division():
     assert spec.var_name == 'discount'
     assert spec.default_value == 1
 
-def test_index_error_returns_spec():
-    """IndexError now returns an index_guard PatchSpec with inferred default."""
+def test_index_error_const_index_returns_list_bound_guard():
+    """x[5] (constant integer index) -> list_bound_guard with list var and const key."""
     def simple():
-        x = [1,2]
+        x = [1, 2]
         return x[5]
     instrs = list(dis.get_instructions(simple.__code__))
     subscr = next(i for i in instrs if i.opname == 'BINARY_SUBSCR')
     frame = make_frame(simple, lasti=subscr.offset)
     spec = analyze_exception(frame, IndexError, IndexError("list index out of range"), None)
-    # We now handle IndexError via index_guard (no longer returns None)
-    if spec is not None:
-        assert spec.strategy == 'index_guard'
+    assert spec is not None, "IndexError on x[5] should return a spec"
+    assert spec.strategy == 'list_bound_guard', (
+        f"Expected list_bound_guard for constant-index subscript, got {spec.strategy}"
+    )
+    assert spec.var_name == 'x', f"Expected var_name='x', got {spec.var_name!r}"
+    assert spec.key_name == (5,), f"Expected key_name=(5,), got {spec.key_name!r}"
+
+
+def test_index_error_var_index_returns_index_guard():
+    """list[i] (variable index) -> index_guard with idx_var and list_len_var."""
+    def search(items, i):
+        return items[i]
+    instrs = list(dis.get_instructions(search.__code__))
+    subscr = next(i for i in instrs if i.opname == 'BINARY_SUBSCR')
+    frame = make_frame(search, lasti=subscr.offset)
+    spec = analyze_exception(frame, IndexError, IndexError("list index out of range"), None)
+    assert spec is not None, "IndexError on items[i] should return a spec"
+    assert spec.strategy == 'index_guard', (
+        f"Expected index_guard for variable-index subscript, got {spec.strategy}"
+    )
+    assert spec.var_name == 'i', f"Expected var_name='i', got {spec.var_name!r}"
+    assert spec.list_len_var == 'items', f"Expected list_len_var='items', got {spec.list_len_var!r}"
 
 def test_truly_unknown_exception():
     """Exceptions we don't handle should return None."""
