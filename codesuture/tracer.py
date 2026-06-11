@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from codesuture.pattern_matcher import analyze_exception
 from codesuture.guard_synthesizer import synthesize_guarded_code, _force_despecialize
 from codesuture.code_replacer import replace_function_code, get_function_from_frame
-from codesuture.rewind import rewind_frame_to_start
+from codesuture.frame_rewind import rewind_frame_to_start
 
 _PYTHON_PREFIX = os.path.normcase(os.path.abspath(sys.prefix)) + os.sep
 _PYTHON_BASE_PREFIX = os.path.normcase(os.path.abspath(sys.base_prefix)) + os.sep
@@ -38,7 +38,7 @@ class _CodeSutureFallbackSuppression(Exception):
 
 
 class CodeSutureTracer:
-    def __init__(self, dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7, silent=False):
+    def __init__(self, dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7, silent=False, rewind=False, rewind_depth=500):
         import threading
         self.dry_run = dry_run
         self.log_file = log_file
@@ -49,6 +49,18 @@ class CodeSutureTracer:
         self.shadow_mode = shadow
         self.ttl = ttl
         self.silent = silent
+        self.rewind_enabled = rewind
+
+        # Phase 9 (v2): Rewind crash forensics
+        self._rewind_buffer = None
+        if rewind:
+            try:
+                from codesuture.rewind.tracer import enable_rewind
+                self._rewind_buffer = enable_rewind(max_frames=rewind_depth)
+                if not self.silent:
+                    print(f"[CodeSuture] Rewind enabled (buffer: {rewind_depth} frames, 60s window)")
+            except Exception:
+                pass
         self._patched_codes = {}
         self.attempts = {}
         self.stats = {
@@ -81,6 +93,14 @@ class CodeSutureTracer:
             self._lifecycle_mgr = None
 
     def __call__(self, frame, event, arg):
+        # Rewind capture: record call/return/exception events
+        if self._rewind_buffer is not None:
+            try:
+                from codesuture.rewind.tracer import rewind_trace_callback
+                rewind_trace_callback(frame, event, arg)
+            except Exception:
+                pass
+
         if event == 'return' and self.shadow_mode:
             with self._state_lock:
                 guard_type = self._patched_codes.get(frame.f_code)
@@ -356,6 +376,27 @@ class CodeSutureTracer:
                     self._handled_exc_ids.add(exc_id)
                 if not self.silent:
                     print(f"[CodeSuture] Patch applied to {getattr(func, '__name__', 'unknown')}().")
+
+                # Dump rewind buffer on crash
+                if self._rewind_buffer is not None:
+                    try:
+                        from codesuture.rewind.persistence import save_rewind_dump
+                        rewind_data = self._rewind_buffer.dump(last_n=30)
+                        if rewind_data:
+                            func_name_rw = getattr(func, '__qualname__', getattr(func, '__name__', 'unknown'))
+                            save_rewind_dump(
+                                func_name_rw, rewind_data,
+                                crash_info={
+                                    'exception_type': exc_type.__name__,
+                                    'exception_message': str(exc_value),
+                                    'guard_type': spec.strategy,
+                                    'target_variable': spec.var_name,
+                                }
+                            )
+                            if not self.silent:
+                                print(f"[CodeSuture] Rewind timeline saved ({len(rewind_data)} events)")
+                    except Exception:
+                        pass
 
                 # Log incident
                 self._log_incident(
@@ -849,6 +890,7 @@ def _install_http_transaction_replay(tracer):
                              getattr(patch, 'var_name', 'unknown')
                     fallback = {
                         'patched': True,
+                        '_degraded': True,
                         'path': getattr(self, 'path', ''),
                         'result': None,
                     }
@@ -866,6 +908,12 @@ def _install_http_transaction_replay(tracer):
                     tracer._thread_state.http_transaction_active = True
                     method()
                 except Exception as exc:
+                    command = getattr(self, 'command', '').upper()
+                    if command not in ('GET', 'HEAD', 'OPTIONS'):
+                        # Do not replay mutating transactions to prevent double execution (idempotency)
+                        guard_type, target_name = _infer_http_patch_from_exception(exc)
+                        _send_codesuture_response(guard_type, target_name)
+                        return
                     if (not tracer._should_replay_http_transaction(exc) and
                             not tracer._handle_http_transaction_exception(exc)):
                         guard_type, target_name = _infer_http_patch_from_exception(exc)
@@ -966,10 +1014,10 @@ def _install_monitoring_engine(tracer):
     if not tracer.silent:
         print('[CodeSuture] Python 3.12+ sys.monitoring active. Zero baseline overhead.')
 
-def install(dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7, silent=False):
+def install(dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7, silent=False, rewind=False, rewind_depth=500):
     global _original_excepthook
     import threading
-    tracer = CodeSutureTracer(dry_run, log_file, max_retries, autonomous, script_path, verbose, shadow, ttl, silent=silent)
+    tracer = CodeSutureTracer(dry_run, log_file, max_retries, autonomous, script_path, verbose, shadow, ttl, silent=silent, rewind=rewind, rewind_depth=rewind_depth)
 
     if sys.version_info >= (3, 12) and hasattr(sys, 'monitoring'):
         _install_monitoring_engine(tracer)

@@ -5,7 +5,7 @@ import types
 from codesuture.pattern_matcher import analyze_exception
 from codesuture.guard_synthesizer import synthesize_guarded_code
 from codesuture.code_replacer import replace_function_code, get_function_from_frame
-from codesuture.rewind import rewind_frame_to_start
+from codesuture.frame_rewind import rewind_frame_to_start
 
 def apply_fix(exc_type_name: str = None, exc_msg: str = None) -> str:
 

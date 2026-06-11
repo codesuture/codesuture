@@ -1,5 +1,5 @@
 """
-codesuture/rewind.py
+codesuture/frame_rewind.py
 Low-level frame manipulation for CPython 3.11+.
 
 Suppresses the active exception and rewinds the frame so the
@@ -28,7 +28,7 @@ def _detect_f_lineno_offset(frame):
         except Exception:
             continue
     _log.warning(
-        "codesuture.rewind: could not detect f_lineno offset in "
+        "codesuture.frame_rewind: could not detect f_lineno offset in "
         "PyFrameObject; ctypes fallback disabled"
     )
     return None

@@ -1,33 +1,27 @@
 <p align="center">
-  <img src="assets/hero.png" alt="CodeSuture" width="100%">
+  <img src="assets/demo.gif" alt="CodeSuture healing a live crash" width="100%">
 </p>
 
 <h1 align="center">CodeSuture</h1>
 
 <p align="center">
-  <strong>Self-healing runtime for Python. Catches crashes, patches live bytecode, keeps your server alive.</strong>
+  <strong>Your Python app crashed at 3 AM. CodeSuture already patched it — and left you the one-line fix for the morning.</strong>
 </p>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/version-1.0.0-0d6efd?style=for-the-badge" alt="Version"></a>
-  <a href="#"><img src="https://img.shields.io/badge/python-3.11%2B-10b981?style=for-the-badge" alt="Python"></a>
-  <a href="#"><img src="https://img.shields.io/badge/tests-416%20passing-10b981?style=for-the-badge" alt="Tests"></a>
-  <a href="#"><img src="https://img.shields.io/badge/license-MIT-6366f1?style=for-the-badge" alt="License"></a>
+  <a href="https://pypi.org/project/codesuture/"><img src="https://img.shields.io/pypi/v/codesuture?style=for-the-badge&color=0d6efd" alt="PyPI"></a>
+  <a href="https://pypi.org/project/codesuture/"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-10b981?style=for-the-badge" alt="Python"></a>
+  <a href="LINK_TO_CI"><img src="https://img.shields.io/badge/tests-416%20passing-10b981?style=for-the-badge" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6366f1?style=for-the-badge" alt="License"></a>
 </p>
 
 <p align="center">
   <code>pip install codesuture</code>
 </p>
 
-> ⚠️ **CodeSuture modifies live bytecode at runtime.** Use in production at your own risk. Always verify patches with `codesuture audit` and `codesuture explain` before relying on them.
-
 ---
 
-## What is CodeSuture?
-
-When a Python program crashes — `AttributeError`, `KeyError`, `ZeroDivisionError`, `IndexError`, `TypeError` — CodeSuture intercepts the exception **at the exact bytecode instruction**, analyzes the crash pattern, injects a deterministic guard into the function's code object **in memory**, and retries execution.
-
-No source files are modified. No decorator required. No restart needed.
+## 30 seconds, zero code changes
 
 ```bash
 codesuture run your_app.py
@@ -49,33 +43,62 @@ Run it again — the patch loads from disk before the first call:
 [CodeSuture] Already healed: loaded persistent patch for get_bio
 ```
 
+And in the morning, it hands you the permanent fix:
+
+```
+$ codesuture suggest
+
+  Function: get_bio
+  Guard: null_guard on 'profile'    Confidence: LIKELY
+
+  -    bio = user.profile.bio
+  +    bio = user.profile.bio if user.profile is not None else ''
+```
+
+**No decorators. No source file changes. No restart.**
+
+---
+
+## Why this exists
+
+Sentry tells you your server crashed. Your logs tell you why. **Nothing keeps it alive while you sleep.**
+
+When a Python program hits an `AttributeError`, `KeyError`, `ZeroDivisionError`, `IndexError`, or `TypeError`, CodeSuture intercepts the exception at the exact bytecode instruction, injects a minimal deterministic guard into the function's code object in memory, and retries execution.
+
+Every patch is temporary by design: it carries a TTL, generates a source-level fix suggestion, and nags you until the root cause is fixed. CodeSuture is a safety net — built to make ignoring real bugs impossible.
+
 ---
 
 ## How It Works
-
-<p align="center">
-  <img src="assets/architecture.png" alt="CodeSuture Architecture" width="90%">
-</p>
 
 CodeSuture operates in five stages:
 
 | Stage | What happens |
 |-------|-------------|
-| **① Catch** | `sys.settrace()` intercepts exceptions at the exact frame and bytecode offset |
+| **① Catch** | On Python 3.12+, `sys.monitoring` (PEP 669) fires **only when an exception is raised** — near-zero overhead on healthy code. On 3.11, a `sys.settrace` fallback is used |
 | **② Analyze** | The pattern matcher disassembles the failing instruction chain and identifies the crashing variable, operation, and crash type |
-| **③ Patch** | The guard synthesizer injects new bytecode into the function's code object. A semantic diff gate rejects patches that modify too much logic |
-| **④ Rewind** | The execution frame is rewound to re-enter the patched function. On HTTP servers, the full transaction is replayed — the client gets a `200` |
-| **⑤ Persist** | The patched code object is serialized to `.codesuture_store/` with SHA-256 integrity checks and TTL metadata |
+| **③ Patch** | The guard synthesizer injects minimal bytecode. A semantic diff gate rejects patches that modify too much logic |
+| **④ Rewind** | The frame is rewound and the patched function re-enters. On HTTP servers, **safe requests (GET/HEAD) are replayed in-place** — the client gets a real response instead of a dropped socket |
+| **⑤ Persist** | The patch is serialized to `.codesuture_store/`, **HMAC-signed with a server-generated 256-bit key**, checksummed, and stamped with a TTL |
 
 ---
 
-## Guard Types
+## Performance
 
-<p align="center">
-  <img src="assets/guards.png" alt="Guard Types" width="80%">
-</p>
+On Python 3.12+ instrumentation activates **only at the moment an exception is raised**. Your happy path runs at native speed.
 
-CodeSuture ships with **11 deterministic guard types** — each one targets a specific crash pattern and injects the minimal bytecode fix:
+| Runtime | Engine | Healthy-path overhead |
+|---------|--------|----------------------|
+| Python 3.12 / 3.13 | `sys.monitoring` (PEP 669) | ~0% — exception-only callbacks |
+| Python 3.11 | `sys.settrace` fallback | measurable — recommended for dev/staging |
+
+Verify it yourself: `python benchmarks/overhead.py`
+
+---
+
+## The 11 Guards
+
+Every guard is **deterministic and rule-based** — no AI deciding what your code does at runtime.
 
 | Guard | Crash Type | Example | What It Does |
 |-------|-----------|---------|--------------|
@@ -85,106 +108,31 @@ CodeSuture ships with **11 deterministic guard types** — each one targets a sp
 | `chain_subscript_guard` | Nested subscript failures | `resp["user"]["name"]["first"]` | Guards the entire chain from the root |
 | `index_guard` | `IndexError` (variable index) | `items[i]` when `i >= len(items)` | Bounds-checks `i` against `len(items)` |
 | `list_bound_guard` | `IndexError` (constant index) | `parts[3]` when `len(parts) < 4` | Checks `len(parts) > 3` before access |
-| `division_guard` | `ZeroDivisionError` | `total / count` when `count` is `0` | Substitutes a safe divisor when variable denominator is zero |
-| `str_coerce_guard` | `TypeError` on string concat | `"age: " + age` when `age` is `int` | Wraps non-str variable with `str()` after assignment |
+| `division_guard` | `ZeroDivisionError` | `total / count` when `count` is `0` | Substitutes a safe divisor when denominator is zero |
+| `str_coerce_guard` | `TypeError` on string concat | `"age: " + age` when `age` is `int` | Wraps non-str variable with `str()` |
 | `type_coercion_guard` | `TypeError` on conversion | `int("not_a_number")` | Adds type validation before coercion |
 | `file_guard` | `FileNotFoundError` | `open(path)` | Checks `os.path.exists()` before open |
 | `callable_guard` | `TypeError` calling `None` | `callback()` when `callback` is `None` | Returns `None` for unknown callables |
 
 ---
 
-## CLI Reference
+## HTTP Recovery — Honest by Design
 
-### Core Commands
-
-```bash
-# Run a script with live patching
-codesuture run app.py
-
-# Run with full diagnostics
-codesuture run app.py --verbose --shadow --retries 5
-
-# Preview patches without applying
-codesuture run app.py --dry-run
-
-# Watch mode — auto-restart after patches
-codesuture watch server.py --max-restarts 10
-```
-
-### Inspection & Governance
-
-```bash
-# Show all active patches
-codesuture audit
-
-# Plain-language explanation of patches
-codesuture explain
-codesuture explain get_user_profile
-
-# View incident log
-codesuture incidents
-codesuture incidents --since 2d
-
-# Generate markdown incident report
-codesuture digest
-
-# View fix suggestions
-codesuture suggest
-
-# Export Prometheus metrics
-codesuture metrics
-
-# View patch lifecycle states
-codesuture lifecycle show
-```
-
-### Rollback & Cleanup
-
-```bash
-# Roll back a specific patch
-codesuture rollback get_user_profile
-
-# Preview what would be removed
-codesuture rollback --dry-run
-
-# Remove everything — patches, fingerprints, incidents
-codesuture rollback --all
-```
-
-### Alerts
-
-```bash
-# View unread alerts
-codesuture alerts
-
-# Dismiss alerts for a resolved incident
-codesuture alerts dismiss <incident_id>
-```
-
----
-
-## HTTP Recovery
-
-CodeSuture patches exceptions inside HTTP request handlers. When a handler crashes and a guard is synthesized, CodeSuture patches the function **mid-request** and replays the transaction in-place. The client receives a response instead of a socket close.
-
-```
-[CodeSuture] Caught AttributeError: 'NoneType' object has no attribute 'get_profile'
-[CodeSuture] Applying null_guard on 'get_profile' ...
-[CodeSuture] Patch applied to do_GET().
-[CodeSuture] Transaction replay armed for do_GET().
-[CodeSuture] Transaction replay: retrying patched HTTP handler in-place.
-127.0.0.1 - - "GET /user-data HTTP/1.1" 200 -
-```
-
-Every patched response carries a transparency header:
+When a request handler crashes, CodeSuture patches the function mid-request. The client gets a response instead of a socket close — and is **never lied to** about it:
 
 ```http
 HTTP/1.0 200 OK
 Content-type: application/json
 X-CodeSuture: patched=1; guard=null_guard; target=get_profile
 
-{"result": null}
+{"_degraded": true, "result": null, "patched": true}
 ```
+
+Three hard rules:
+
+1. **Mutating requests are never replayed.** POST, PUT, PATCH, and DELETE handlers are patched for *future* requests, but the failing transaction is never re-executed. No double charges. No duplicate writes. Ever.
+2. **Degraded responses say so.** Every patched response carries the `X-CodeSuture` header and an explicit `"_degraded": true` body flag.
+3. **Replay applies to safe methods only.** GET and HEAD are replayed in-place after patching.
 
 ### Framework Middleware
 
@@ -200,25 +148,51 @@ app = CodeSutureASGIMiddleware(your_asgi_app)
 
 ---
 
+## Built Paranoid
+
+A tool that touches live bytecode has to earn trust. Every layer assumes something will go wrong:
+
+| Defense | What it prevents |
+|---------|-----------------|
+| **HMAC-signed patches** | A random 256-bit key is generated per server; every persisted patch is signed. A malicious file dropped into `.codesuture_store/` is rejected on load — it can't carry a valid signature |
+| **Semantic diff gate** | Patches that modify too many instructions are rejected. The engine never rewrites complex logic to fix a simple crash |
+| **SHA-256 integrity** | Corrupted or tampered `.code` files are refused on load |
+| **Bytecode validation** | Synthesized patches referencing variables not in `co_varnames` are rejected before injection |
+| **Original code backup** | Pre-patch code objects are kept in memory — rollback restores them in the *running* process, no restart |
+| **Patch TTL** | Every patch expires. An expired patch means you should have fixed the root cause by now — and CodeSuture will tell you so |
+| **Mutating-method lockout** | POST/PUT/PATCH/DELETE transactions are never replayed |
+| **Thread safety** | All shared state is lock-protected. Safe under free-threaded Python 3.13+ (no-GIL) |
+| **Caller-aware propagation** | After patching, `gc.get_referrers` updates closures, bound methods, and partials |
+| **CPython portability** | Version-aware opcode sets handle 3.11, 3.12, and 3.13+ instruction differences |
+
+Audit everything at any time:
+
+```bash
+codesuture audit      # every active patch
+codesuture explain    # plain-language description of what each patch does
+```
+
+---
+
 ## Incident Intelligence
 
-Every crash CodeSuture intercepts is logged as a structured incident with automatic severity classification:
+Every crash is logged as a structured incident with automatic severity classification:
 
 | Severity | When |
 |----------|------|
 | **CRITICAL** | Callable replacement, sensitive modules (auth, payment, billing) |
-| **HIGH** | First occurrence, HTTP mutating methods (POST/PUT/DELETE), chain subscripts |
+| **HIGH** | First occurrence, crashes in mutating HTTP handlers, chain subscripts |
 | **MEDIUM** | Standard guards (null, key, division, index) after first occurrence |
 | **LOW** | Repeat patterns, file guards, string coercion |
 
 ```bash
 $ codesuture incidents
 
-  Time                 Severity   Function                  Guard                Target          Status
-  ──────────────────── ────────── ───────────────────────── ──────────────────── ─────────────── ──────────
-  2026-05-26T19:05:55  MEDIUM     render_user_card          null_guard           user            patched
-  2026-05-26T19:05:55  HIGH       format_weather_report     chain_subscript_guard data            patched
-  2026-05-26T19:05:56  MEDIUM     compute_metrics           division_guard       success         patched
+  Time                 Severity   Function                  Guard                  Status
+  ──────────────────── ────────── ───────────────────────── ────────────────────── ─────────
+  2026-05-26T19:05:55  MEDIUM     render_user_card          null_guard             patched
+  2026-05-26T19:05:55  HIGH       format_weather_report     chain_subscript_guard  patched
+  2026-05-26T19:05:56  MEDIUM     compute_metrics           division_guard         patched
 ```
 
 ```bash
@@ -233,40 +207,23 @@ $ codesuture digest
 - **Functions patched:** 3
 ```
 
----
-
-## Alert System
-
-CodeSuture routes incidents to alert channels based on severity:
-
-- **File alerts** — Markdown files written to `.codesuture_alerts/`
-- **Webhook alerts** — HTTP POST to your alerting endpoint (Slack, PagerDuty, etc.)
-- **Escalation** — Functions patched 5+ times in 24 hours are auto-escalated
-
-```bash
-$ codesuture alerts
-
-  CodeSuture — Unread Alerts
-
-  [HIGH] format_weather_report crashed with KeyError, patched with chain_subscript_guard
-  Escalating get_user_display from HIGH to CRITICAL (patched 5 times in 24h)
-```
+**Alerts** route by severity — markdown files in `.codesuture_alerts/`, or webhooks (Slack, PagerDuty). Functions patched 5+ times in 24 hours are auto-escalated to CRITICAL.
 
 ---
 
-## Shadow Execution
-
-With `--shadow`, CodeSuture runs the original (unpatched) function alongside the patched version and compares results:
+## Shadow Execution — Prove the Patch Is Right
 
 ```bash
 codesuture run app.py --shadow
 ```
 
+Runs the original (unpatched) function alongside the patched version and compares results:
+
 | Verdict | Meaning |
 |---------|---------|
 | **JUSTIFIED** | Original crashes, patched succeeds — the patch is necessary |
-| **UNNECESSARY** | Both produce the same result — consider removing the patch |
-| **DIVERGENT** | Results differ — the patch changes behavior, review recommended |
+| **UNNECESSARY** | Identical results — consider removing the patch |
+| **DIVERGENT** | Results differ — review before trusting |
 
 Shadow-verified patches get upgraded to **VERIFIED** confidence in fix suggestions.
 
@@ -274,7 +231,7 @@ Shadow-verified patches get upgraded to **VERIFIED** confidence in fix suggestio
 
 ## Fix Suggestions
 
-CodeSuture generates concrete source-code fix suggestions for every active patch:
+CodeSuture generates concrete source-code fixes for every active patch:
 
 ```bash
 $ codesuture suggest
@@ -290,7 +247,6 @@ $ codesuture suggest
   +    bio = user.profile.bio if user.profile is not None else ''
 ```
 
-Confidence levels:
 - **VERIFIED** — Shadow execution confirmed the fix works
 - **LIKELY** — Deterministic guard with high confidence
 - **EXPERIMENTAL** — Complex guard, review recommended
@@ -299,7 +255,7 @@ Confidence levels:
 
 ## Lifecycle Management
 
-Every patch transitions through a state machine:
+Every patch transitions through a state machine — stale patches get flagged:
 
 ```
 DETECTED → PATCHED → PERSISTED → SUGGESTED → VERIFIED → FIXED
@@ -320,9 +276,35 @@ $ codesuture lifecycle show
 
 ---
 
-## Prometheus Metrics
+## CLI Reference
 
-Export patch metrics in Prometheus text format:
+```bash
+# Core
+codesuture run app.py                     # run with live patching
+codesuture run app.py --dry-run           # preview patches without applying
+codesuture run app.py --verbose --shadow --retries 5
+codesuture watch server.py --max-restarts 10
+
+# Inspection & governance
+codesuture audit                          # all active patches
+codesuture explain [func]                 # plain-language explanations
+codesuture incidents [--since 2d]         # crash log
+codesuture digest                         # markdown incident report
+codesuture suggest                        # source-level fix suggestions
+codesuture metrics                        # Prometheus export
+codesuture lifecycle show                 # patch state machine
+codesuture alerts                         # unread alerts
+codesuture alerts dismiss <incident_id>   # dismiss resolved alerts
+
+# Rollback
+codesuture rollback <func>                # disk files AND live process restore
+codesuture rollback --dry-run             # preview removal
+codesuture rollback --all                 # remove everything
+```
+
+---
+
+## Prometheus Metrics
 
 ```bash
 $ codesuture metrics
@@ -337,32 +319,18 @@ codesuture_patches_total{guard_type="division_guard"} 3
 
 ---
 
-## Safety & Security
-
-| Feature | What it prevents |
-|---------|-----------------|
-| **Semantic diff gate** | Rejects patches that modify too many instructions. The engine never corrupts a complex function to fix a simple crash |
-| **SHA-256 integrity** | Persisted `.code` files are checksummed. Tampered files are refused on load |
-| **Patch validation** | Synthesized bytecode is checked for `LOAD_FAST` references to variables not in `co_varnames`. Invalid patches are rejected |
-| **Original code backup** | Pre-patch code objects are stored in `_ORIGINAL_CODES` for runtime rollback |
-| **Patch TTL** | Every patch carries a time-to-live. Expired patches warn to fix the root cause |
-| **Thread safety** | All shared state protected by locks. Safe under free-threaded Python 3.13+ (no-GIL) |
-| **Caller-aware propagation** | After patching, `gc.get_referrers` updates closures, bound methods, and partials |
-| **Runtime rollback** | `codesuture rollback` removes disk files AND restores original code in the running process |
-| **CPython portability** | Version-aware opcode sets handle 3.11, 3.12, and 3.13+ instruction differences |
-
----
-
 ## Known Limitations
+
+We'd rather you read these here than discover them in production:
 
 | Limitation | Detail |
 |-----------|--------|
 | **Python 3.11+ only** | Depends on CPython bytecode structures introduced in 3.11 |
-| **First crash leaks** | The initial exception propagates to the caller. The patch prevents recurrence on subsequent calls |
-| **Comprehensions** | List/dict/set/generator comprehensions are anonymous nested code objects — CodeSuture logs a warning and skips them |
-| **Semantic bugs** | CodeSuture fixes structural crashes (null access, missing keys, type mismatches). Logic errors that produce wrong results without crashing cannot be detected |
-| **Single-process** | Patches apply per-process. `.codesuture_store/` is shared on disk for cross-restart persistence |
-| **Async (experimental)** | Standard `async def` functions are patched. Async generators and deep `await` chains may not be handled correctly |
+| **First crash propagates** | The initial exception reaches the caller. The patch prevents recurrence on subsequent calls |
+| **Comprehensions skipped** | List/dict/set/generator comprehensions are anonymous nested code objects — logged and skipped |
+| **Crashes only, not logic bugs** | Wrong results that don't raise an exception cannot be detected |
+| **Per-process patching** | Patches apply per-process; `.codesuture_store/` is shared on disk for cross-restart persistence |
+| **Async is experimental** | Standard `async def` works. Async generators and deep `await` chains may not be handled correctly |
 
 ---
 
@@ -372,9 +340,9 @@ codesuture_patches_total{guard_type="division_guard"} 3
 
 **Not a static analyzer.** It operates at runtime on live bytecode, not on source files.
 
-**Not autonomous by default.** All patches are deterministic rule-based guards. An opt-in `--autonomous` flag exists for experimental LLM-powered suggestions, but it never auto-applies.
+**Not autonomous by default.** All patches are deterministic rule-based guards. An opt-in `--autonomous` flag exists for experimental LLM-powered suggestions — they are never auto-applied.
 
-**Not a replacement for fixing bugs.** CodeSuture is a runtime safety net. The `suggest` command tells you exactly what source code to change. The `lifecycle` system tracks patch age. Expired patches mean you should have fixed the root cause by now.
+**Not a replacement for fixing bugs.** The `suggest` command tells you exactly what source code to change. The `lifecycle` system tracks patch age. Expired patches mean you should have fixed the root cause by now.
 
 ---
 
@@ -386,10 +354,8 @@ pip install codesuture
 
 Requires **Python 3.11+** and the [`bytecode`](https://pypi.org/project/bytecode/) library (installed automatically).
 
-For experimental LLM-powered autonomous mode:
-
 ```bash
-pip install "codesuture[autonomous]"
+pip install "codesuture[autonomous]"   # optional: experimental LLM suggestions
 ```
 
 ---

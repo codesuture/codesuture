@@ -1,5 +1,5 @@
 """
-CodeSuture v1.0.0 Ship-Gate Tests
+CodeSuture v1.1.0 Ship-Gate Tests
 =================================
 These tests run REAL scenarios end-to-end. No mocking. No faking.
 Each test launches a subprocess with codesuture to verify actual behavior.
@@ -342,7 +342,7 @@ except:
 
     def test_version_no_unicode_crash(self):
         out, err, rc = _run_cli('--version')
-        assert '1.0.0' in out, f"Version wrong: {out}"
+        assert '1.1.0' in out, f"Version wrong: {out}"
         assert rc == 0
 
 
@@ -679,4 +679,4 @@ class TestVersionConsistency:
         assert cli_version == init_version == toml_version, (
             f"Version mismatch: CLI={cli_version}, __init__={init_version}, pyproject={toml_version}"
         )
-        assert cli_version == '1.0.0', f"Expected 1.0.0, got {cli_version}"
+        assert cli_version == '1.1.0', f"Expected 1.1.0, got {cli_version}"

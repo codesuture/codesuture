@@ -41,7 +41,7 @@ def main():
     _ensure_utf8_stdout()
     parser = argparse.ArgumentParser(prog='codesuture',
                                      description='Runtime Python bytecode patcher with self-healing re-execution')
-    parser.add_argument('--version', action='version', version='codesuture 1.0.0')
+    parser.add_argument('--version', action='version', version='codesuture 1.1.0')
     sub = parser.add_subparsers(dest='command', required=True)
 
     run_parser = sub.add_parser('run', help='Run a script with live patching')
@@ -56,6 +56,10 @@ def main():
     run_parser.add_argument('--ttl', type=int, default=7, metavar='DAYS', help='Patch TTL in days (default: 7)')
     run_parser.add_argument('--silent', action='store_true',
                             help='Suppress exception output for healed crashes (default: show summary)')
+    run_parser.add_argument('--rewind', action='store_true',
+                            help='Enable crash forensics recording (ring buffer)')
+    run_parser.add_argument('--rewind-depth', type=int, default=500, metavar='N',
+                            help='Max frames to keep in rewind buffer (default: 500)')
 
     sub.add_parser('audit', help='Show all active patches')
 
@@ -122,6 +126,17 @@ def main():
     metrics_parser.add_argument('--format', choices=['prometheus', 'json'], default='prometheus',
                                 dest='metrics_format', help='Output format')
 
+    # --- v2: Rewind Crash Forensics ---
+    rewind_parser = sub.add_parser('rewind', help='View crash forensics timelines')
+    rewind_parser.add_argument('func_name', nargs='?', default=None,
+                               help='Function name to show rewind timeline for')
+    rewind_parser.add_argument('--last', action='store_true',
+                               help='Show most recent crash timeline')
+    rewind_parser.add_argument('--list', action='store_true', dest='list_dumps',
+                               help='List all saved rewind dumps')
+    rewind_parser.add_argument('--json', action='store_true', dest='rewind_json',
+                               help='Output as JSON')
+
     args = parser.parse_args()
 
     if args.command == 'audit':
@@ -180,6 +195,10 @@ def main():
         _handle_metrics(args)
         return
 
+    if args.command == 'rewind':
+        _handle_rewind(args)
+        return
+
     if getattr(args, 'autonomous', False):
         try:
             import llama_cpp
@@ -207,7 +226,9 @@ def main():
                              autonomous=getattr(args, 'autonomous', False),
                              script_path=args.script, verbose=args.verbose,
                              shadow=args.shadow, ttl=args.ttl,
-                             silent=args.silent)
+                             silent=args.silent,
+                             rewind=getattr(args, 'rewind', False),
+                             rewind_depth=getattr(args, 'rewind_depth', 500))
             max_runs = args.retries + 1
             for run in range(max_runs):
                 patched_before = tracer.stats['patched']
@@ -568,3 +589,91 @@ def _handle_metrics(args):
 
 if __name__ == '__main__':
     main()
+
+
+def _handle_rewind(args):
+    """Handle the 'rewind' command — view crash forensics timelines."""
+    import json as _json
+    from codesuture.rewind.persistence import load_latest_rewind, list_rewind_dumps
+
+    # List all saved rewind dumps
+    if getattr(args, 'list_dumps', False):
+        dumps = list_rewind_dumps()
+        if not dumps:
+            print("[CodeSuture Rewind] No saved crash timelines.")
+            print("[CodeSuture Rewind] Run with --rewind flag: codesuture run --rewind <script>")
+            return
+        print(f"\n  Saved Crash Timelines ({len(dumps)})\n")
+        for d in dumps:
+            print(f"  {d['timestamp']}  {d['function']}()  ({d['events']} events)  [{d['file']}]")
+        print()
+        return
+
+    # Load specific function or latest
+    func_name = getattr(args, 'func_name', None)
+    use_last = getattr(args, 'last', False)
+
+    if func_name:
+        data = load_latest_rewind(func_name)
+    elif use_last:
+        data = load_latest_rewind()
+    else:
+        # Default: show latest
+        data = load_latest_rewind()
+
+    if data is None:
+        print("[CodeSuture Rewind] No crash timelines found.")
+        if func_name:
+            print(f"[CodeSuture Rewind] No timeline for '{func_name}'.")
+        print("[CodeSuture Rewind] Run with --rewind flag: codesuture run --rewind <script>")
+        return
+
+    # JSON output
+    if getattr(args, 'rewind_json', False):
+        print(_json.dumps(data, indent=2, default=str))
+        return
+
+    # Human-readable output
+    from codesuture.rewind.formatter import format_rewind_timeline
+    from codesuture.rewind.buffer import FrameSnapshot
+
+    timeline = data.get('timeline', [])
+    crash_info = data.get('crash_info', {})
+
+    # Convert dicts back to FrameSnapshot objects for the formatter
+    snapshots = []
+    for item in timeline:
+        try:
+            snapshots.append(FrameSnapshot(
+                timestamp=item.get('timestamp', 0),
+                event=item.get('event', '?'),
+                function=item.get('function', '?'),
+                module=item.get('module', '?'),
+                lineno=item.get('lineno', 0),
+                args=item.get('args', {}),
+                locals_snapshot=item.get('locals', {}),
+                return_value=item.get('return_value'),
+                exception=item.get('exception'),
+            ))
+        except Exception:
+            continue
+
+    if not snapshots:
+        print("[CodeSuture Rewind] Timeline is empty.")
+        return
+
+    # Print header with crash info
+    func_display = data.get('function', '?')
+    print(f"\n[CodeSuture Rewind] Last crash timeline for {func_display}()")
+
+    if crash_info:
+        exc_type = crash_info.get('exception_type', '')
+        exc_msg = crash_info.get('exception_message', '')
+        guard = crash_info.get('guard_type', '')
+        var = crash_info.get('target_variable', '')
+        if exc_type:
+            print(f"  Exception: {exc_type}: {exc_msg}")
+        if guard:
+            print(f"  Guard applied: {guard} on '{var}'")
+
+    print(format_rewind_timeline(snapshots))

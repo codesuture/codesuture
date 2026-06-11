@@ -7,11 +7,24 @@ import inspect
 import json
 from datetime import datetime, timezone
 import threading
+import hmac
+import secrets
 
 CACHE_DIR = ".codesuture_store"
 HEALED_FUNCTIONS = set()
 ANNOUNCED_HEALED_FUNCTIONS = set()
 _store_lock = threading.Lock()
+
+def _get_hmac_key():
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    key_path = os.path.join(CACHE_DIR, "secret.key")
+    if not os.path.exists(key_path):
+        with _store_lock:
+            if not os.path.exists(key_path):
+                with open(key_path, "wb") as f:
+                    f.write(secrets.token_bytes(32))
+    with open(key_path, "rb") as f:
+        return f.read()
 
 def _heal_key(module_name, func_name, key_name=None):
 
@@ -40,7 +53,7 @@ def save_patch(func, new_code, spec=None, ttl_days=7, original_code=None):
                 marshal.dump(original_code, f)
 
     code_bytes = marshal.dumps(new_code)
-    code_hash = hashlib.sha256(code_bytes).hexdigest()
+    code_hash = hmac.new(_get_hmac_key(), code_bytes, hashlib.sha256).hexdigest()
     with _store_lock:
         with open(cache_path, "wb") as f:
             f.write(code_bytes)
@@ -89,7 +102,7 @@ def _load_cached_code(module_name, func_name):
     with open(code_path, "rb") as f:
         code_bytes = f.read()
 
-    file_hash = hashlib.sha256(code_bytes).hexdigest()
+    file_hash = hmac.new(_get_hmac_key(), code_bytes, hashlib.sha256).hexdigest()
     stored_hash = None
 
     if os.path.isfile(json_path):
@@ -114,10 +127,13 @@ def _load_cached_code(module_name, func_name):
 
     if stored_hash is not None:
         if file_hash != stored_hash:
-            print(f"[CodeSuture] WARNING: Patch integrity check failed for {func_name} \u2014 refusing to load")
+            # Fallback for old un-hmac signed patches to avoid noisy errors immediately after upgrade,
+            # though it's safer to refuse them. We'll refuse.
+            print(f"[CodeSuture] WARNING: Patch integrity check failed (or signature missing) for {func_name} \u2014 refusing to load")
             return None
     else:
-        print(f"[CodeSuture] WARNING: Legacy patch without integrity check for {func_name}")
+        print(f"[CodeSuture] WARNING: Legacy patch without integrity check for {func_name} \u2014 refusing to load")
+        return None
 
     with _store_lock:
         return marshal.loads(code_bytes)
