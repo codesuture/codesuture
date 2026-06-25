@@ -59,6 +59,7 @@ class IncidentRecord:
     ttl_days: int = 7
     hit_count: int = 1
     thread_name: str = ""
+    shadow_verified: bool = False
 
     # Links
     related_incidents: List[str] = field(default_factory=list)

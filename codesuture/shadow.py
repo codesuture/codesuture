@@ -8,6 +8,7 @@ was necessary.
 import threading
 import types
 import logging
+import concurrent.futures
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 from enum import Enum
@@ -144,13 +145,26 @@ class ShadowExecutor:
                 self._func_locks[func_key] = threading.Lock()
             func_lock = self._func_locks[func_key]
 
+        print(f"[CodeSuture] Shadow warning: shallow copy used — nested mutations may affect verdict for {func_key}")
+
         # Temporarily swap to original code and run (serialized per function)
         with func_lock:
             try:
                 current_code = patched_func.__code__
                 patched_func.__code__ = original_code
                 try:
-                    original_result = patched_func(*args, **kwargs)
+                    def _shadow_wrapper():
+                        import threading
+                        threading.current_thread()._is_codesuture_shadow = True
+                        try:
+                            return patched_func(*args, **kwargs)
+                        finally:
+                            threading.current_thread()._is_codesuture_shadow = False
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(_shadow_wrapper)
+                        original_result = future.result(timeout=5.0)
+                    
                     result.original_result = original_result
                     result.original_crashed = False
 
@@ -175,7 +189,12 @@ class ShadowExecutor:
                             func_key, original_result, patched_result
                         )
 
+                except concurrent.futures.TimeoutError:
+                    result.verdict = ShadowVerdict.SHADOW_ERROR
+                    _log.error('[Shadow] Timeout executing original code for %s', func_key)
                 except Exception as e:
+                    # If it's a TimeoutError from another source or just the actual crash
+                    real_e = e.args[0] if isinstance(e, getattr(concurrent.futures, 'TimeoutError', type(None))) else e
                     # Original crashed — this confirms the patch was needed
                     result.original_crashed = True
                     result.original_exception = f"{type(e).__name__}: {e}"

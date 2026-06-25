@@ -61,7 +61,17 @@ class CodeSutureTracer:
                     print(f"[CodeSuture] Rewind enabled (buffer: {rewind_depth} frames, 60s window)")
             except Exception:
                 pass
+        
         self._patched_codes = {}
+        self._shadow_args_cache = {}
+        self.shadow_executor = None
+        if self.shadow_mode:
+            try:
+                from codesuture.shadow import ShadowExecutor
+                self.shadow_executor = ShadowExecutor()
+            except ImportError:
+                pass
+        
         self.attempts = {}
         self.stats = {
             "patched": 0,
@@ -93,6 +103,10 @@ class CodeSutureTracer:
             self._lifecycle_mgr = None
 
     def __call__(self, frame, event, arg):
+        import threading
+        if getattr(threading.current_thread(), '_is_codesuture_shadow', False):
+            return None
+
         # Rewind capture: record call/return/exception events
         if self._rewind_buffer is not None:
             try:
@@ -101,13 +115,45 @@ class CodeSutureTracer:
             except Exception:
                 pass
 
+        if event == 'call' and self.shadow_mode:
+            with self._state_lock:
+                guard_type = self._patched_codes.get(id(frame.f_code))
+            if guard_type is not None:
+                try:
+                    import copy
+                    argcount = frame.f_code.co_argcount + frame.f_code.co_kwonlyargcount
+                    if frame.f_code.co_flags & 0x04: argcount += 1
+                    if frame.f_code.co_flags & 0x08: argcount += 1
+                    varnames = frame.f_code.co_varnames[:argcount]
+                    args_copy = {}
+                    for name in varnames:
+                        if name in frame.f_locals:
+                            try:
+                                args_copy[name] = copy.copy(frame.f_locals[name])
+                            except Exception:
+                                args_copy[name] = frame.f_locals[name]
+                    self._shadow_args_cache[id(frame)] = args_copy
+                except Exception:
+                    pass
+
         if event == 'return' and self.shadow_mode:
             with self._state_lock:
-                guard_type = self._patched_codes.get(frame.f_code)
+                guard_type = self._patched_codes.get(id(frame.f_code))
             if guard_type is not None:
-                from codesuture.shadow import shadow_check
-                func_name = frame.f_code.co_name
-                shadow_check(func_name, arg, guard_type)
+                args_copy = self._shadow_args_cache.pop(id(frame), {})
+                if self.shadow_executor is not None:
+                    func_key = f"{frame.f_code.co_filename}:{frame.f_code.co_name}"
+                    # Find the function object to pass to shadow_execute
+                    from codesuture.code_replacer import get_function_from_frame
+                    func = get_function_from_frame(frame)
+                    if func:
+                        # Extract positional and keyword arguments correctly
+                        # Best effort: pass args_copy as kwargs to avoid pos/kw mismatches
+                        res = self.shadow_executor.shadow_execute(
+                            func_key, func, arg, args=(), kwargs=args_copy, guard_type=guard_type
+                        )
+                        if res and res.verdict.name == "PATCH_JUSTIFIED":
+                            self._record_shadow_verification(frame, guard_type)
                 return self
 
         if event == 'exception':
@@ -135,6 +181,39 @@ class CodeSutureTracer:
             if m:
                 return '__subscript__'
         return None
+
+    def _record_shadow_verification(self, frame, guard_type):
+        """Update incident log to show that shadow execution verified the patch."""
+        if self._incident_logger is None:
+            return
+        from codesuture.fingerprint import compute_fingerprint
+        import dataclasses, uuid as _uuid
+        try:
+            fp = compute_fingerprint(frame.f_code, frame.f_lasti, 'shadow')
+            # Find the latest incident with this fingerprint (search last 30 days)
+            from datetime import datetime, timezone, timedelta
+            incidents = self._incident_logger.get_incidents(since=datetime.now(timezone.utc) - timedelta(days=30))
+            matching = [inc for inc in incidents if inc.fingerprint == fp]
+            if not matching:
+                # Fall back: match by function name + guard_type
+                func_name = frame.f_code.co_name
+                matching = [inc for inc in incidents
+                            if inc.function == func_name and inc.guard_type == guard_type]
+            if matching:
+                latest = matching[-1]
+                # Create a clean copy with shadow_verified=True (never mutate the original)
+                new_inc = dataclasses.replace(
+                    latest,
+                    incident_id=_uuid.uuid4().hex[:12],
+                    shadow_verified=True,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+                self._incident_logger.log_incident(new_inc)
+                if not self.silent:
+                    print(f"[CodeSuture SHADOW] 🟢 Verified patch for {latest.function}!")
+        except Exception as e:
+            if not self.silent:
+                print(f"[CodeSuture SHADOW] Error recording verification: {e}")
 
     def _handle_exception(self, frame, exc_type, exc_value, exc_tb, thread=None):
 
@@ -355,7 +434,27 @@ class CodeSutureTracer:
                     save_patch(func, new_code, spec, self.ttl)
 
                     if self.shadow_mode:
-                        self._patched_codes[new_code] = spec.strategy
+                        self._patched_codes[id(new_code)] = spec.strategy
+                        if self.shadow_executor is not None:
+                            func_key = f"{old_code.co_filename}:{old_code.co_name}"
+                            self.shadow_executor.register_original(func_key, old_code)
+                            # Capture args at patch time for shadow comparison
+                            try:
+                                import copy
+                                argcount = old_code.co_argcount + old_code.co_kwonlyargcount
+                                if old_code.co_flags & 0x04: argcount += 1
+                                if old_code.co_flags & 0x08: argcount += 1
+                                varnames = old_code.co_varnames[:argcount]
+                                args_copy = {}
+                                for vname in varnames:
+                                    if vname in frame.f_locals:
+                                        try:
+                                            args_copy[vname] = copy.copy(frame.f_locals[vname])
+                                        except Exception:
+                                            args_copy[vname] = frame.f_locals[vname]
+                                self._shadow_args_cache[id(frame)] = args_copy
+                            except Exception:
+                                pass
 
                 if self.verbose:
                     from codesuture.diff_guard import semantic_diff
@@ -404,16 +503,45 @@ class CodeSutureTracer:
                     exc_tb=exc_tb, spec=spec, status='patched',
                     fingerprint=fp, func=func,
                 )
-                if self._arm_http_transaction_replay(frame, func, exc_id, spec, display_name):
-                    return
                 if func is not None and not self._is_uninvokable(func, frame):
                     with self._patch_lock:
                         try:
                             patched_code = new_code
                             if getattr(func, "__code__", None) is not patched_code:
                                 func.__code__ = patched_code
-                            self._patched_codes[patched_code] = spec.strategy
+                            self._patched_codes[id(patched_code)] = spec.strategy
+                            if self.shadow_mode and self.shadow_executor is not None:
+                                func_key = f"{old_code.co_filename}:{old_code.co_name}"
+                                self.shadow_executor.register_original(func_key, old_code)
+                                # Capture args NOW, before rewind. The 'call' event fired
+                                # before the patch existed, so args were never captured there.
+                                # Rewind doesn't trigger a new 'call' event either.
+                                try:
+                                    import copy
+                                    argcount = old_code.co_argcount + old_code.co_kwonlyargcount
+                                    if old_code.co_flags & 0x04: argcount += 1
+                                    if old_code.co_flags & 0x08: argcount += 1
+                                    varnames = old_code.co_varnames[:argcount]
+                                    args_copy = {}
+                                    for vname in varnames:
+                                        if vname in frame.f_locals:
+                                            try:
+                                                args_copy[vname] = copy.copy(frame.f_locals[vname])
+                                            except Exception:
+                                                args_copy[vname] = frame.f_locals[vname]
+                                    self._shadow_args_cache[id(frame)] = args_copy
+                                except Exception:
+                                    pass
                             _force_despecialize(func)
+                        except Exception:
+                            pass
+
+                if self._arm_http_transaction_replay(frame, func, exc_id, spec, display_name):
+                    return
+
+                if func is not None and not self._is_uninvokable(func, frame):
+                    with self._patch_lock:
+                        try:
                             if not rewind_frame_to_start(frame, patched_code):
                                 self._try_transaction_fallback(frame, func, exc_id)
                                 return
@@ -690,14 +818,24 @@ class CodeSutureTracer:
         return all(hasattr(handler, attr) for attr in ('rfile', 'wfile', 'send_response'))
 
     def _arm_http_transaction_replay(self, frame, func, exc_id, spec=None, target_name=None):
-        if not self._is_http_handler_frame(frame):
+        curr = frame
+        handler_frame = None
+        while curr is not None:
+            if self._is_http_handler_frame(curr):
+                handler_frame = curr
+                break
+            curr = curr.f_back
+            
+        if handler_frame is None:
             return False
-        handler = frame.f_locals.get('self')
+            
+        handler = handler_frame.f_locals.get('self')
         if handler is not None:
             handler._codesuture_patch = spec
             handler._codesuture_patch_target = target_name or getattr(spec, 'target_name', None) or getattr(spec, 'var_name', 'unknown')
             handler.__class__._codesuture_patch = spec
             handler.__class__._codesuture_patch_target = handler._codesuture_patch_target
+            
         self._thread_state.http_replay_ready = True
         self._thread_state.http_replay_exc_id = exc_id
         self._thread_state.http_replay_func_name = getattr(func, '__name__', 'unknown')
@@ -705,6 +843,7 @@ class CodeSutureTracer:
         self._thread_state.http_replay_patch_target = target_name
         with self._state_lock:
             self._rewound_exc_ids.add(exc_id)
+            self._handled_exc_ids.add(exc_id)
         if not self.silent:
             print(f"[CodeSuture] Transaction replay armed for {getattr(func, '__name__', 'unknown')}().")
         return True
@@ -895,14 +1034,17 @@ def _install_http_transaction_replay(tracer):
                         'result': None,
                     }
                     body = _json.dumps(fallback).encode()
-                    original_send_response(200)
-                    self.send_header("Content-type", "application/json")
-                    self.send_header(
-                        "X-CodeSuture",
-                        f"patched=1; guard={guard}; target={target}"
-                    )
-                    original_end_headers()
-                    self.wfile.write(body)
+                    try:
+                        original_send_response(200)
+                        self.send_header("Content-type", "application/json")
+                        self.send_header(
+                            "X-CodeSuture",
+                            f"patched=1; guard={guard}; target={target}"
+                        )
+                        original_end_headers()
+                        self.wfile.write(body)
+                    except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
+                        pass  # Client disconnected — nothing to send to
 
                 try:
                     tracer._thread_state.http_transaction_active = True
@@ -931,7 +1073,10 @@ def _install_http_transaction_replay(tracer):
                 tracer._thread_state.http_transaction_active = False
                 self.send_response = original_send_response
                 self.end_headers = original_end_headers
-            self.wfile.flush()
+            try:
+                self.wfile.flush()
+            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError, OSError):
+                pass  # Client disconnected
         except TimeoutError as exc:
             self.log_error("Request timed out: %r", exc)
             self.close_connection = True
@@ -999,6 +1144,9 @@ def _install_monitoring_engine(tracer):
     mon.use_tool_id(TOOL_ID, 'CodeSuture')
 
     def _on_raise(code, instruction_offset, exception):
+        import threading
+        if getattr(threading.current_thread(), '_is_codesuture_shadow', False):
+            return
         tb = sys.exc_info()[2]
         frame = tb.tb_frame if tb else None
         if frame is None:
@@ -1019,7 +1167,7 @@ def install(dry_run=False, log_file=None, max_retries=3, autonomous=False, scrip
     import threading
     tracer = CodeSutureTracer(dry_run, log_file, max_retries, autonomous, script_path, verbose, shadow, ttl, silent=silent, rewind=rewind, rewind_depth=rewind_depth)
 
-    if sys.version_info >= (3, 12) and hasattr(sys, 'monitoring'):
+    if sys.version_info >= (3, 12) and hasattr(sys, 'monitoring') and not shadow:
         _install_monitoring_engine(tracer)
     else:
         _install_trace_on_all_threads(tracer)
