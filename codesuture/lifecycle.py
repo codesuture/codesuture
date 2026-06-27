@@ -12,23 +12,21 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 from enum import Enum
 
-
 class PatchState(Enum):
-    DETECTED = "detected"       # Exception caught, analyzing
+    DETECTED = "detected"
     PATCHED = "patched"         # Bytecode guard applied in memory
     REPLAYED = "replayed"       # HTTP transaction replayed
-    PERSISTED = "persisted"     # Patch saved to disk
-    SUGGESTED = "suggested"     # Fix suggestion generated
-    VERIFIED = "verified"       # Suggestion verified in sandbox
-    FIXED = "fixed"             # Engineer applied permanent fix
-    EXPIRED = "expired"         # TTL exceeded
-    ROLLED_BACK = "rolled_back" # Engineer rolled back the patch
-
+    PERSISTED = "persisted"
+    SUGGESTED = "suggested"
+    VERIFIED = "verified"
+    FIXED = "fixed"
+    EXPIRED = "expired"
+    ROLLED_BACK = "rolled_back"
 
 @dataclass
 class PatchLifecycle:
     """Tracks a single patch's lifecycle."""
-    patch_id: str = ""          # func_module:func_name:guard_type
+    patch_id: str = ""
     function_name: str = ""
     module: str = ""
     guard_type: str = ""
@@ -86,7 +84,6 @@ class PatchLifecycle:
             data['current_state'] = PatchState(data['current_state'])
         known = {f.name for f in __import__('dataclasses').fields(cls)}
         return cls(**{k: v for k, v in data.items() if k in known})
-
 
 class LifecycleManager:
     """Manages lifecycle state for all patches."""

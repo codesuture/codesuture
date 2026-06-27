@@ -19,16 +19,13 @@ def _force_despecialize(func):
     """
     try:
         # PyFunction_SetCode forces de-specialization
-        # by going through the official C API path
-        # rather than the Python attribute setter.
+
         ctypes.pythonapi.PyFunction_SetCode(
             ctypes.py_object(func),
             ctypes.py_object(func.__code__)
         )
     except Exception:
-        pass  # Non-fatal: patch still applied, may not
-              # take effect until next function cold-start
-
+        pass
 
 class PatchValidationError(Exception):
     pass
@@ -143,7 +140,6 @@ def _build_entry_point_null_guard(original_code, var_name, default):
         bc.insert(idx, instr)
     return bc
 
-# Strategies that inject inline at the crash site (replace BINARY_SUBSCR etc.)
 # These are the ones that can corrupt exception tables when inside try blocks.
 _INLINE_STRATEGIES = frozenset({
     'subscript_guard', 'key_guard', 'dict_get_guard',
@@ -152,7 +148,7 @@ _INLINE_STRATEGIES = frozenset({
 
 def synthesize_guarded_code(original_code, spec: PatchSpec) -> Bytecode:
     # Bug 3 fix: If the crash site is inside a try/except block and we
-    # would normally inject inline, redirect to an entry-point guard
+
     # to avoid corrupting co_exceptiontable offsets on CPython 3.11+.
     if spec.strategy in _INLINE_STRATEGIES and _is_inside_try_block(original_code):
         import logging
@@ -175,7 +171,7 @@ def synthesize_guarded_code(original_code, spec: PatchSpec) -> Bytecode:
     elif spec.strategy == 'index_guard':
         res = _build_index_guarded_code(original_code, spec.var_name, spec.list_len_var, spec.default_value)
     elif spec.strategy == 'list_bound_guard':
-        # var_name = the list variable, key_name = (const_int_index,)
+
         const_idx = spec.key_name[0] if spec.key_name else 0
         res = _build_list_bound_guarded_code(original_code, spec.var_name, const_idx, spec.default_value)
     elif spec.strategy == 'file_guard':
@@ -441,13 +437,13 @@ def _build_subscript_guarded_code(original_code, container_var, key_name_or_var,
             new_instrs.append(emit_load_global('dict', push_null=False))
             new_instrs.extend(emit_call(2))
             new_instrs.append(emit_jump_if_true(is_dict))
-            # Not a dict — use direct subscript (lists, tuples, etc.)
+
             new_instrs.append(Instr('LOAD_FAST', '_codesuture_cont'))
             new_instrs.append(Instr('LOAD_FAST', '_codesuture_key'))
             new_instrs.append(Instr('BINARY_SUBSCR'))
             new_instrs.append(Instr('JUMP_FORWARD', end))
             new_instrs.append(is_dict)
-            # Dict — use safe .get()
+
             new_instrs.append(Instr('LOAD_FAST', '_codesuture_cont'))
             new_instrs.append(emit_load_method('get'))
             new_instrs.append(Instr('LOAD_FAST', '_codesuture_key'))
@@ -492,7 +488,6 @@ def _global_name(arg):
     if isinstance(arg, tuple):
         return arg[1] if len(arg) > 1 else arg[0]
     return arg
-
 
 def _match_chain(instrs, start, root_var, keys):
 
@@ -595,11 +590,9 @@ def _build_index_guarded_code(original_code, idx_var, list_var, default):
         Instr('RETURN_VALUE'),
         skip
     ]
-    # Insert the guard AFTER both idx_var and list_var are assigned.
-    # We must find the LAST store of either variable — whichever comes later
+
     # in the bytecode — so that both are bound when the guard executes.
-    # If a variable is a parameter it has no STORE_FAST; treat its "last store"
-    # position as -1 (already assigned at function entry, any position is fine).
+
     last_store_idx_var = -1
     last_store_list_var = -1
     for i, instr in enumerate(bc):
@@ -613,7 +606,7 @@ def _build_index_guarded_code(original_code, idx_var, list_var, default):
     if last_store >= 0:
         insert_idx = last_store + 1
     else:
-        # Both are parameters — insert right after RESUME
+
         insert_idx = 0
         for i, instr in enumerate(bc):
             if isinstance(instr, Instr) and instr.name == 'RESUME':
@@ -644,8 +637,7 @@ def _build_list_bound_guarded_code(original_code, list_var, const_idx, default):
         Instr('RETURN_VALUE'),
         skip,
     ]
-    # Insert right after the last STORE_FAST for list_var so it's bound.
-    # If list_var is a parameter (no STORE_FAST), insert after RESUME.
+
     insert_idx = 0
     last_store = -1
     for i, instr in enumerate(bc):
@@ -662,7 +654,6 @@ def _build_list_bound_guarded_code(original_code, list_var, const_idx, default):
         bc.insert(insert_idx, instr)
     return bc
 
-
 def _build_file_guarded_code(original_code, path_var, default):
     bc = Bytecode.from_code(original_code)
     skip = Label()
@@ -678,7 +669,7 @@ def _build_file_guarded_code(original_code, path_var, default):
         Instr('RETURN_VALUE'),
         skip
     ]
-    # Find the last STORE_FAST for path_var — insert guard right after it
+
     insert_idx = None
     for i, instr in enumerate(bc):
         if isinstance(instr, Instr) and instr.name == 'STORE_FAST' and instr.arg == path_var:
@@ -709,8 +700,7 @@ def _build_str_coerce_guarded_code(original_code, var_name):
         Instr('STORE_FAST', var_name),
         skip
     ]
-    # Find the last STORE_FAST for var_name — insert guard right after it
-    # so the variable is guaranteed to be assigned before we check its type
+
     insert_idx = None
     for i, instr in enumerate(bc):
         if isinstance(instr, Instr) and instr.name == 'STORE_FAST' and instr.arg == var_name:

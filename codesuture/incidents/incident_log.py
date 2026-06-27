@@ -5,7 +5,6 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from codesuture.incidents.incident import IncidentRecord, Severity, IncidentStatus
 
-
 class IncidentLogger:
     def __init__(self, log_dir='.codesuture_incidents'):
         self.log_dir = log_dir
@@ -36,7 +35,6 @@ class IncidentLogger:
         if since is None:
             since = datetime.now(timezone.utc) - timedelta(days=1)
 
-        # Iterate over log files from 'since' date to today
         current = since.date()
         today = datetime.now(timezone.utc).date()
         while current <= today:
@@ -51,7 +49,7 @@ class IncidentLogger:
                         try:
                             data = json.loads(line)
                             record = IncidentRecord.from_dict(data)
-                            # Apply filters
+
                             if severity and record.severity != severity:
                                 continue
                             if status and record.status != status:

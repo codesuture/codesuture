@@ -10,7 +10,6 @@ from typing import List, Optional
 
 from codesuture.rewind.buffer import FrameSnapshot
 
-
 def format_rewind_timeline(
     snapshots: List[FrameSnapshot],
     crash_time: Optional[float] = None,
@@ -35,7 +34,7 @@ def format_rewind_timeline(
         return '[CodeSuture Rewind] No recorded events.\n'
 
     if crash_time is None:
-        # Find the last exception event
+
         for s in reversed(snapshots):
             if s.event == 'exception':
                 crash_time = s.timestamp

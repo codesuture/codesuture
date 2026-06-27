@@ -20,7 +20,6 @@ STORE_DIR = os.path.join(PROJ_ROOT, '.codesuture_store')
 FP_FILE = os.path.join(PROJ_ROOT, '.codesuture_fingerprints')
 INC_DIR = os.path.join(PROJ_ROOT, '.codesuture_incidents')
 
-
 def _clean_state():
     """Remove all persisted state for a clean test."""
     for path in [STORE_DIR, FP_FILE, INC_DIR]:
@@ -28,7 +27,6 @@ def _clean_state():
             shutil.rmtree(path, ignore_errors=True)
         elif os.path.isfile(path):
             os.remove(path)
-
 
 def _run_codesuture(script_content, *extra_args, timeout=30):
     """Write a temp script, run it under codesuture, return (stdout, stderr, returncode)."""
@@ -47,7 +45,6 @@ def _run_codesuture(script_content, *extra_args, timeout=30):
     finally:
         os.unlink(tmp.name)
 
-
 def _run_cli(*args, timeout=15):
     """Run a codesuture CLI command, return (stdout, stderr, returncode)."""
     result = subprocess.run(
@@ -58,10 +55,6 @@ def _run_cli(*args, timeout=15):
     )
     return result.stdout, result.stderr, result.returncode
 
-
-# ============================================================================
-# TEST 1: Patch persists across process restarts
-# ============================================================================
 class TestPersistenceRoundTrip:
     """Patch in process A, kill it, run process B — patch loads from disk."""
 
@@ -87,27 +80,20 @@ try:
 except AttributeError as e:
     print(f"CRASHED:{e}")
 '''
-        # Run 1: crash, patch, persist
+
         out1, _, _ = _run_codesuture(script)
         assert 'Patch applied' in out1, f"Run 1 should patch. Got: {out1}"
         assert os.path.isdir(STORE_DIR), "Patch store should exist after run 1"
 
-        # Count files in store
         patch_files = [f for f in os.listdir(STORE_DIR) if f.endswith('.json')]
         assert len(patch_files) >= 1, f"Should have at least 1 patch file, got {patch_files}"
 
-        # Run 2: patch loads from disk, no new patching needed
         out2, _, _ = _run_codesuture(script)
-        # Should either say "Already healed" or just not crash
-        # The key test: no "Caught AttributeError" in run 2
+
         assert 'Caught AttributeError' not in out2, (
             f"Run 2 should load persisted patch, not re-catch. Got: {out2}"
         )
 
-
-# ============================================================================
-# TEST 2: Rollback ACTUALLY removes patches and restores crash behavior
-# ============================================================================
 class TestRollbackRestoresCrash:
     """After rollback, the original crash must come back."""
 
@@ -127,25 +113,19 @@ try:
 except ZeroDivisionError:
     print("CRASHED:ZeroDivisionError")
 '''
-        # Run 1: patch
+
         out1, _, _ = _run_codesuture(script)
         assert 'Patch applied' in out1 or 'division_guard' in out1
 
-        # Rollback
         out_rb, _, rc = _run_cli('rollback', '--all')
         assert rc == 0, f"Rollback failed: {out_rb}"
 
-        # Run 2: should crash again (patch removed)
         out2, _, _ = _run_codesuture(script)
-        # Should catch the error fresh (patch was removed)
+
         assert 'Caught ZeroDivisionError' in out2 or 'division_guard' in out2, (
             f"After rollback, should re-catch. Got: {out2}"
         )
 
-
-# ============================================================================
-# TEST 3: str_coerce_guard does NOT introduce UnboundLocalError
-# ============================================================================
 class TestStrCoerceNoRegression:
     """The patched function must work on ALL subsequent calls, not just the first."""
 
@@ -183,10 +163,6 @@ for r in records:
             f"str_coerce_guard introduced UnboundLocalError:\n{combined}"
         )
 
-
-# ============================================================================
-# TEST 4: list_bound_guard does NOT introduce UnboundLocalError
-# ============================================================================
 class TestListBoundNoRegression:
     """Index guard with constant index must not corrupt local variables."""
 
@@ -222,10 +198,6 @@ for tc in test_cases:
             f"list_bound_guard introduced UnboundLocalError:\n{combined}"
         )
 
-
-# ============================================================================
-# TEST 5: Dry-run does NOT modify any functions
-# ============================================================================
 class TestDryRunNoSideEffects:
     """--dry-run must preview without applying."""
 
@@ -252,10 +224,6 @@ except:
             "Dry-run should not create patch files"
         )
 
-
-# ============================================================================
-# TEST 6: Fingerprint deduplication — same crash twice = one patch
-# ============================================================================
 class TestFingerprintDedup:
     """Identical crashes should reuse the same patch, not create duplicates."""
 
@@ -278,23 +246,20 @@ for i in range(3):
 '''
         _run_codesuture(script)
 
-        # Check fingerprint registry
         assert os.path.isfile(FP_FILE), "Fingerprint file should exist"
         with open(FP_FILE, 'r', encoding='utf-8') as f:
             registry = json.load(f)
-        # Should have exactly 1 fingerprint entry (not 3)
+
         assert len(registry) >= 1, "Should have at least 1 fingerprint"
 
-
-# ============================================================================
 # TEST 7: CLI commands don't crash on Windows (Unicode safety)
-# ============================================================================
+
 class TestCLIUnicodeSafety:
     """All CLI commands must run without UnicodeEncodeError on any terminal."""
 
     def setup_method(self):
         _clean_state()
-        # Create some incidents first
+
         script = '''
 def crash():
     x = None
@@ -345,10 +310,6 @@ except:
         assert '1.1.0' in out, f"Version wrong: {out}"
         assert rc == 0
 
-
-# ============================================================================
-# TEST 8: Multi-function cascade — crash in deep call chain
-# ============================================================================
 class TestDeepCallChainPatch:
     """Function A→B→C, C crashes. Patch propagates correctly."""
 
@@ -382,10 +343,8 @@ except KeyError as e:
             f"Should patch the KeyError. Got: {out}"
         )
 
-
-# ============================================================================
 # TEST 9: Concurrent crashes from multiple threads — no deadlock
-# ============================================================================
+
 class TestConcurrentCrashesNoDeadlock:
     """Multiple threads crashing simultaneously must not deadlock."""
 
@@ -427,10 +386,6 @@ print(f"DONE:errors={len(errors)}")
         # Must NOT have a deadlock timeout
         assert rc != -1, "Process was killed (possible deadlock)"
 
-
-# ============================================================================
-# TEST 10: WSGI middleware patches and retries
-# ============================================================================
 class TestWSGIMiddlewarePatch:
     """WSGI middleware should catch crash, patch, and retry the request."""
 
@@ -475,19 +430,15 @@ except Exception as e:
 '''
         out, err, _ = _run_codesuture(script)
         combined = out + err
-        # The middleware should have caught the crash
+
         assert 'CRASHED' in combined or 'STATUS:' in combined, (
             f"Middleware should handle or propagate. Got: {combined}"
         )
-        # Must NOT introduce UnboundLocalError
+
         assert 'UnboundLocalError' not in combined, (
             f"Middleware introduced UnboundLocalError: {combined}"
         )
 
-
-# ============================================================================
-# TEST 11: Incident logging creates real JSONL records
-# ============================================================================
 class TestIncidentLogging:
     """Crashes should produce real JSONL incident records."""
 
@@ -510,7 +461,7 @@ except:
         _run_codesuture(script)
 
         assert os.path.isdir(INC_DIR), "Incidents directory should exist"
-        # JSONL files may be at top level or nested — walk the tree
+
         jsonl_files = []
         for dp, dn, fnames in os.walk(INC_DIR):
             for fname in fnames:
@@ -518,28 +469,23 @@ except:
                     jsonl_files.append(os.path.join(dp, fname))
         assert len(jsonl_files) >= 1, f"Should have JSONL files. Tree: {os.listdir(INC_DIR)}"
 
-        # Parse the JSONL — every line must be valid JSON
         jsonl_path = os.path.join(INC_DIR, jsonl_files[0])
         with open(jsonl_path, 'r', encoding='utf-8') as f:
             lines = [l.strip() for l in f if l.strip()]
 
         assert len(lines) >= 1, "JSONL should have at least 1 record"
         for line in lines:
-            record = json.loads(line)  # Will raise if invalid JSON
+            record = json.loads(line)
             assert 'timestamp' in record, f"Record missing timestamp: {record}"
             assert 'severity' in record, f"Record missing severity: {record}"
             assert 'guard_type' in record or 'guard' in record, f"Record missing guard info: {record}"
 
-
-# ============================================================================
-# TEST 12: Prometheus metrics output is valid
-# ============================================================================
 class TestPrometheusOutput:
     """codesuture metrics must produce valid Prometheus text format."""
 
     def setup_method(self):
         _clean_state()
-        # Generate some incidents
+
         script = '''
 def crash1():
     return None.x
@@ -563,15 +509,15 @@ except:
         out, err, rc = _run_cli('metrics')
         assert rc == 0, f"metrics command failed: {err}"
         assert 'codesuture_' in out, f"Should contain codesuture_ metrics. Got: {out}"
-        # Every non-comment, non-empty line must be: metric_name{labels} value
+
         for line in out.strip().splitlines():
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
-            # Must have a space between metric name and value
+
             parts = line.rsplit(' ', 1)
             assert len(parts) == 2, f"Invalid Prometheus line: {line}"
-            # Value must be numeric
+
             try:
                 float(parts[1])
             except ValueError:
@@ -585,10 +531,6 @@ except:
                 f"Label should be guard_type=, not guard=. Got: {out}"
             )
 
-
-# ============================================================================
-# TEST 13: Max retries actually stops re-patching
-# ============================================================================
 class TestMaxRetriesHonored:
     """After max_retries, codesuture must give up and not loop forever."""
 
@@ -599,8 +541,7 @@ class TestMaxRetriesHonored:
         _clean_state()
 
     def test_max_retries_stops(self):
-        # A crash where the fix causes a DIFFERENT crash type each time.
-        # After max retries, codesuture must stop trying.
+
         script = '''
 import sys
 sys.path.insert(0, ".")
@@ -619,10 +560,6 @@ print(f"DONE:attempts={tracer.stats}")
         out, _, rc = _run_codesuture(script)
         assert 'DONE' in out, f"Should finish, not hang. Got: {out}"
 
-
-# ============================================================================
-# TEST 14: Shadow mode produces warnings for sentinel values
-# ============================================================================
 class TestShadowModeWarnings:
     """--shadow should warn when patched functions return default/sentinel values."""
 
@@ -644,31 +581,24 @@ except KeyError:
 '''
         out, err, _ = _run_codesuture(script, '--shadow')
         # Shadow mode is active but may or may not produce a warning
-        # depending on whether the function returns. The key test is
-        # that it doesn't crash.
+
         combined = out + err
         assert 'Error' not in combined or 'KeyError' in combined, (
             f"Shadow mode shouldn't crash: {combined}"
         )
 
-
-# ============================================================================
-# TEST 15: Version consistency across all sources
-# ============================================================================
 class TestVersionConsistency:
     def test_all_versions_match(self):
-        # CLI version
+
         out, _, _ = _run_cli('--version')
         cli_version = out.strip().split()[-1]
 
-        # __init__.py version
         sys.path.insert(0, PROJ_ROOT)
         import importlib
         import codesuture
         importlib.reload(codesuture)
         init_version = codesuture.__version__
 
-        # pyproject.toml version
         toml_path = os.path.join(PROJ_ROOT, 'pyproject.toml')
         with open(toml_path, 'r', encoding='utf-8') as f:
             for line in f:

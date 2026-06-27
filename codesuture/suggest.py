@@ -11,25 +11,19 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-
 @dataclass
 class FixSuggestion:
     """A source-level fix suggestion for a patched function."""
     function_name: str = ""
     file_path: str = ""
     line_number: int = 0
-    original_line: str = ""            # The source line that crashed
-    suggested_line: str = ""            # The fix
-    explanation: str = ""               # Human-readable explanation
-    confidence: str = "LIKELY"          # "VERIFIED" / "LIKELY" / "EXPERIMENTAL"
+    original_line: str = ""
+    suggested_line: str = ""
+    explanation: str = ""
+    confidence: str = "LIKELY"
     guard_type: str = ""                # What bytecode guard was applied
-    target_variable: str = ""           # The variable that was None/missing/etc.
-    diff: str = ""                      # Unified diff format
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Guard-type → source-fix mapping rules
-# ──────────────────────────────────────────────────────────────────────
+    target_variable: str = ""
+    diff: str = ""
 
 _FIX_TEMPLATES = {
     'null_guard': {
@@ -84,7 +78,6 @@ _FIX_TEMPLATES = {
     },
 }
 
-
 def generate_suggestion(incident) -> Optional[FixSuggestion]:
     """Generate a source-level fix suggestion from an incident record.
 
@@ -108,7 +101,6 @@ def generate_suggestion(incident) -> Optional[FixSuggestion]:
     exc_msg = getattr(incident, 'exception_message', '')
     shadow_verified = getattr(incident, 'shadow_verified', False)
 
-    # Read the original source line
     original_line = ''
     if file_path and line_number > 0 and os.path.isfile(file_path):
         original_line = linecache.getline(file_path, line_number).rstrip()
@@ -116,13 +108,11 @@ def generate_suggestion(incident) -> Optional[FixSuggestion]:
     if not original_line:
         original_line = f'# (source line {line_number} not available)'
 
-    # Build the fix
     line_stripped = original_line.strip()
     indent = original_line[:len(original_line) - len(original_line.lstrip())]
     default_repr = repr(default_value)
     template = _FIX_TEMPLATES[guard_type]
 
-    # Format variables for templates
     fmt_vars = {
         'target': target,
         'default': default_repr,
@@ -138,7 +128,6 @@ def generate_suggestion(incident) -> Optional[FixSuggestion]:
         'args': '',
     }
 
-    # Generate the suggested line
     if guard_type == 'null_guard' and '.' in target:
         suggested_stripped = template['fix_attr'].format(**fmt_vars)
     elif guard_type == 'null_guard':
@@ -154,12 +143,10 @@ def generate_suggestion(incident) -> Optional[FixSuggestion]:
     suggested_line = indent + suggested_stripped
     explanation = template['explanation'].format(**fmt_vars)
 
-    # Build unified diff
     diff = _build_diff(file_path, line_number, original_line, suggested_line)
 
-    # Determine confidence
     if shadow_verified:
-        # Shadow execution confirmed the patch is justified and fix works
+
         confidence = 'VERIFIED'
     elif guard_type in ('null_guard', 'key_guard', 'division_guard'):
         confidence = 'LIKELY'
@@ -180,7 +167,6 @@ def generate_suggestion(incident) -> Optional[FixSuggestion]:
         target_variable=target,
         diff=diff,
     )
-
 
 def format_suggestion(suggestion: FixSuggestion) -> str:
     """Format a FixSuggestion as a human-readable string."""
@@ -203,11 +189,6 @@ def format_suggestion(suggestion: FixSuggestion) -> str:
         lines.extend(['', '# Diff:', suggestion.diff])
     return '\n'.join(lines)
 
-
-# ──────────────────────────────────────────────────────────────────────
-# Helpers
-# ──────────────────────────────────────────────────────────────────────
-
 def _extract_owner(target: str, exc_msg: str) -> str:
     """Extract the owner object from a dotted attribute target.
 
@@ -219,7 +200,6 @@ def _extract_owner(target: str, exc_msg: str) -> str:
         return target.rsplit('.', 1)[0]
     return target
 
-
 def _extract_container(line: str, target: str) -> str:
     """Extract the container variable from a subscript expression."""
     import re
@@ -227,7 +207,6 @@ def _extract_container(line: str, target: str) -> str:
     if m:
         return m.group(1)
     return target
-
 
 def _extract_func(line: str) -> str:
     """Extract the function name from a call expression."""
@@ -237,13 +216,11 @@ def _extract_func(line: str) -> str:
         return m.group(1)
     return 'func'
 
-
 def _extract_left_operand(line: str) -> str:
     """Extract left operand of a + expression."""
     if '+' in line:
         return line.split('+')[0].strip().split('=')[-1].strip()
     return '""'
-
 
 def _extract_right_operand(line: str, target: str) -> str:
     """Extract right operand of a + expression."""
@@ -253,19 +230,16 @@ def _extract_right_operand(line: str, target: str) -> str:
             return parts[-1].strip()
     return target
 
-
 def _build_key_guard_fix(line: str, key: str, default: str) -> str:
     """Build a .get() fix for KeyError."""
     import re
-    # Match patterns like data["key"] or cfg['key'] or obj[key]
+
     pattern = r'(\w+)\s*\[\s*[\'\"]?' + re.escape(key) + r'[\'\"]?\s*\]'
     m = re.search(pattern, line)
     if m:
         container = m.group(1)
         return re.sub(pattern, f'{container}.get({repr(key)}, {default})', line)
-    # Fallback: simple substitution
     return line.replace(f'["{key}"]', f'.get("{key}", {default})').replace(f"['{key}']", f".get('{key}', {default})")
-
 
 def _build_str_coerce_fix(line: str, target: str) -> str:
     """Build str() wrapping fix for TypeError on string concat.
@@ -275,14 +249,12 @@ def _build_str_coerce_fix(line: str, target: str) -> str:
     with target='count' produces 'label + str(count) + suffix'.
     """
     import re
-    # Match target as a standalone identifier NOT inside quotes.
-    # Strategy: split the line into quoted and unquoted segments,
-    # only substitute in unquoted segments.
+
     parts = re.split(r'''(["'][^"']*["'])''', line)
     found = False
     pattern = rf'\b{re.escape(target)}\b'
     for i, part in enumerate(parts):
-        # Odd indices are quoted strings — skip them
+
         if i % 2 == 0 and re.search(pattern, part):
             parts[i] = re.sub(pattern, f'str({target})', part, count=1)
             found = True
@@ -290,7 +262,6 @@ def _build_str_coerce_fix(line: str, target: str) -> str:
     if found:
         return ''.join(parts)
     return f'str({line.strip()})'
-
 
 def _build_diff(file_path: str, line_number: int, original: str, suggested: str) -> str:
     """Build a unified diff snippet."""

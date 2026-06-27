@@ -11,7 +11,6 @@ import traceback
 import threading
 from datetime import datetime, timezone
 
-
 class CodeSutureASGIMiddleware:
     """ASGI middleware that catches crashes and patches handlers.
 
@@ -70,13 +69,11 @@ class CodeSutureASGIMiddleware:
         if tb is None:
             raise exc
 
-        # Walk to the innermost application frame
         inner_tb = tb
         while inner_tb.tb_next:
             inner_tb = inner_tb.tb_next
         frame = inner_tb.tb_frame
 
-        # Dedup: don't retry same crash twice (per-line, matching tracer granularity)
         exc_id = (exc_type.__name__, frame.f_code.co_filename, frame.f_code.co_name, frame.f_lineno)
         with self._lock:
             if exc_id in self._patched_ids:
@@ -98,7 +95,6 @@ class CodeSutureASGIMiddleware:
                 await self._send_error_response(send, exc, scope)
                 return
 
-            # Apply patch
             new_bc = synthesize_guarded_code(frame.f_code, spec)
             new_code = new_bc.to_code()
             replace_function_code(func, new_code)
@@ -115,7 +111,6 @@ class CodeSutureASGIMiddleware:
                 print(f"[CodeSuture ASGI] Patched {frame.f_code.co_name}() "
                       f"with {guard_type} on '{target}'")
 
-            # Log incident
             try:
                 from codesuture.incidents.incident import IncidentRecord, IncidentStatus
                 from codesuture.incidents.severity import classify_severity
@@ -145,7 +140,6 @@ class CodeSutureASGIMiddleware:
             except Exception:
                 pass
 
-            # Replay request
             try:
                 response_started = False
                 codesuture_header = f"patched=1;guard={guard_type};target={target}"

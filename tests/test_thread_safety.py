@@ -9,24 +9,14 @@ import pytest
 from codesuture.fingerprint import FINGERPRINT_FILE, record
 from codesuture.persistence import CACHE_DIR, save_patch
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _make_dummy_func(n):
     """Create a unique dummy function (different code objects)."""
-    # Use exec to produce genuinely distinct code objects
+
     ns = {}
     exec(f"def _dummy_{n}():\n    return {n}", ns)
     func = ns[f"_dummy_{n}"]
     func.__module__ = "test_thread_safety"
     return func
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def clean_env(tmp_path, monkeypatch):
@@ -39,14 +29,8 @@ def clean_env(tmp_path, monkeypatch):
     if fp.exists():
         fp.unlink()
 
-
-# ---------------------------------------------------------------------------
-# Concurrent fingerprint.record()
-# ---------------------------------------------------------------------------
-
 NUM_WORKERS = 8
 RECORDS_PER_WORKER = 5
-
 
 class TestConcurrentRecord:
     def test_concurrent_record_no_corruption(self, clean_env):
@@ -76,20 +60,14 @@ class TestConcurrentRecord:
 
         assert errors == [], f"Threads raised exceptions: {errors}"
 
-        # The registry file should be valid JSON
         fp_path = clean_env / FINGERPRINT_FILE
         if fp_path.exists():
             import json
             with open(fp_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             assert isinstance(data, dict)
-            # Each record should have been written
+
             assert len(data) > 0
-
-
-# ---------------------------------------------------------------------------
-# Concurrent save_patch()
-# ---------------------------------------------------------------------------
 
 class TestConcurrentSavePatch:
     def test_concurrent_save_patch_no_corruption(self, clean_env):
@@ -124,13 +102,11 @@ class TestConcurrentSavePatch:
         store = clean_env / CACHE_DIR
         assert store.exists()
 
-        # Each function should have produced exactly one .code and one .json
         code_files = list(store.glob("*.code"))
         json_files = list(store.glob("*.json"))
         assert len(code_files) == NUM_WORKERS
         assert len(json_files) == NUM_WORKERS
 
-        # Verify each JSON is valid
         import json as _json
         for jf in json_files:
             with open(jf, "r", encoding="utf-8") as f:

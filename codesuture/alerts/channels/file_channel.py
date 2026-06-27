@@ -3,7 +3,6 @@ import threading
 from datetime import datetime, timezone
 from codesuture.incidents.incident import IncidentRecord, Severity
 
-
 class FileAlertChannel:
     def __init__(self, directory='.codesuture_incidents/alerts'):
         self.directory = directory
@@ -15,7 +14,7 @@ class FileAlertChannel:
         timestamp = datetime.now(timezone.utc)
         ts_str = timestamp.strftime('%Y-%m-%d_%H%M%S')
         # Include incident_id to prevent filename collisions when multiple
-        # incidents arrive within the same second (concurrent requests, tests).
+
         filename = f'ALERT_{ts_str}_{incident.severity.value}_{incident.incident_id}.md'
         filepath = os.path.join(self.directory, filename)
 

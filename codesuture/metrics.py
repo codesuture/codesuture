@@ -10,7 +10,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from collections import Counter
 
-
 class MetricsCollector:
     """Collects and exports CodeSuture metrics."""
 
@@ -23,7 +22,6 @@ class MetricsCollector:
         """Collect all metrics as a dict."""
         metrics = {}
 
-        # Incident metrics
         incidents = self._load_incidents()
         severity_counts = Counter(i.get('severity', 'UNKNOWN') for i in incidents)
         guard_counts = Counter(i.get('guard_type', 'unknown') for i in incidents)
@@ -35,11 +33,9 @@ class MetricsCollector:
         for guard, cnt in guard_counts.items():
             metrics[f'codesuture_patches_total{{guard_type="{guard}"}}'] = cnt
 
-        # Status metrics
         metrics['codesuture_replay_success_total'] = status_counts.get('replayed', 0)
         metrics['codesuture_patches_applied'] = status_counts.get('patched', 0)
 
-        # Lifecycle metrics
         lifecycle_data = self._load_lifecycle()
         state_counts = Counter(p.get('current_state', 'unknown') for p in lifecycle_data)
         metrics['codesuture_patches_active'] = sum(
@@ -49,7 +45,6 @@ class MetricsCollector:
         for state, cnt in state_counts.items():
             metrics[f'codesuture_lifecycle_total{{state="{state}"}}'] = cnt
 
-        # TTL metrics
         expiring_soon = 0
         for p in lifecycle_data:
             ttl = p.get('ttl_days', 7)
@@ -66,7 +61,6 @@ class MetricsCollector:
                     pass
         metrics['codesuture_ttl_expiring_soon'] = expiring_soon
 
-        # Suggestion metrics
         suggestions_total = sum(1 for i in incidents if i.get('suggested_fix'))
         metrics['codesuture_suggestions_generated'] = suggestions_total
         metrics['codesuture_suggestions_verified'] = sum(

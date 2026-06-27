@@ -7,7 +7,6 @@ import pytest
 
 from codesuture.sandbox import verify_fix
 
-
 class TestSandboxTestFix:
     """Real subprocess sandbox tests."""
 
@@ -19,7 +18,7 @@ class TestSandboxTestFix:
 
     def test_fix_passes_when_fix_is_correct(self, tmp_path):
         """A correct fix should return True."""
-        # Original script that crashes
+
         script = self._write_script(tmp_path, "buggy.py", """
 def divide(a, b):
     return a / b
@@ -27,7 +26,7 @@ def divide(a, b):
 result = divide(10, 0)
 print(result)
 """)
-        # Fixed source — the function with the fix applied
+
         fixed_source = """
 def divide(a, b):
     if b == 0:
@@ -52,7 +51,7 @@ def divide(a, b):
 result = divide(10, 0)
 print(result)
 """)
-        # "Fixed" source still divides by zero
+
         bad_fix = """
 def divide(a, b):
     return a / b
@@ -75,7 +74,7 @@ def get_data():
 
 result = get_data()
 """)
-        # "Fix" introduces a NameError instead
+
         bad_fix = """
 def get_data():
     return undefined_variable
@@ -97,7 +96,7 @@ def compute():
 
 result = compute()
 """)
-        # "Fix" that loops forever
+
         loop_fix = """
 def compute():
     while True:
@@ -147,7 +146,7 @@ result = fn()
 def fn():
     return 0
 """
-        # Count temp files before
+
         temp_dir = tempfile.gettempdir()
         before = set(os.listdir(temp_dir))
 
@@ -160,7 +159,7 @@ def fn():
         )
 
         after = set(os.listdir(temp_dir))
-        # New temp files created by verify_fix should be cleaned up
+
         leaked = after - before
         py_leaked = [f for f in leaked if f.endswith('.py')]
         assert len(py_leaked) == 0, f"Leaked temp files: {py_leaked}"

@@ -15,14 +15,8 @@ from codesuture.rollback import (
     rollback_runtime,
 )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _dummy_target():
     return 42
-
 
 def _make_func_with_spec():
     from codesuture.pattern_matcher import PatchSpec
@@ -36,15 +30,9 @@ def _make_func_with_spec():
     )
     return func, code_obj, spec
 
-
 def _base_name(func):
     func_name = func.__qualname__.replace("<", "_").replace(">", "_")
     return f"{func.__module__}.{func_name}"
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def clean_env(tmp_path, monkeypatch):
@@ -58,11 +46,6 @@ def clean_env(tmp_path, monkeypatch):
     if fp.exists():
         fp.unlink()
 
-
-# ---------------------------------------------------------------------------
-# rollback_function
-# ---------------------------------------------------------------------------
-
 class TestRollbackFunction:
     def test_removes_code_and_json(self, clean_env):
         func, code_obj, spec = _make_func_with_spec()
@@ -74,7 +57,6 @@ class TestRollbackFunction:
         assert code_path.exists()
         assert json_path.exists()
 
-        # rollback_function matches by the short function name
         rollback_function(func.__qualname__.replace("<", "_").replace(">", "_"))
 
         assert not code_path.exists()
@@ -103,30 +85,21 @@ class TestRollbackFunction:
         func, code_obj, spec = _make_func_with_spec()
         save_patch(func, code_obj, spec)
 
-        # Track in lifecycle
         lm = LifecycleManager(store_dir=str(clean_env / '.codesuture_incidents'))
         func_name = func.__qualname__.replace("<", "_").replace(">", "_")
         lm.track('test_module', func_name, 'null_guard',
                  state=PatchState.PATCHED)
 
-        # Verify it's tracked as PATCHED
         patches = lm.get_by_function(func_name)
         assert len(patches) > 0
         assert patches[0].current_state == PatchState.PATCHED
 
-        # Rollback
         rollback_function(func_name)
 
-        # Reload and verify state is ROLLED_BACK
         lm2 = LifecycleManager(store_dir=str(clean_env / '.codesuture_incidents'))
         patches = lm2.get_by_function(func_name)
         assert len(patches) > 0
         assert patches[0].current_state == PatchState.ROLLED_BACK
-
-
-# ---------------------------------------------------------------------------
-# rollback_all
-# ---------------------------------------------------------------------------
 
 class TestRollbackAll:
     def test_removes_entire_store(self, clean_env):
@@ -155,11 +128,6 @@ class TestRollbackAll:
         captured = capsys.readouterr()
         assert "Nothing to roll back" in captured.out
 
-
-# ---------------------------------------------------------------------------
-# rollback_dry_run
-# ---------------------------------------------------------------------------
-
 class TestRollbackDryRun:
     def test_lists_patches_without_deleting(self, clean_env, capsys):
         func, code_obj, spec = _make_func_with_spec()
@@ -170,7 +138,6 @@ class TestRollbackDryRun:
         assert "DRY-RUN" in captured.out
         assert "Would remove" in captured.out
 
-        # Files should still exist
         base = _base_name(func)
         code_path = clean_env / CACHE_DIR / f"{base}.code"
         json_path = clean_env / CACHE_DIR / f"{base}.json"
@@ -201,11 +168,6 @@ class TestRollbackDryRun:
         captured = capsys.readouterr()
         assert "Nothing to roll back" in captured.out
 
-
-# ---------------------------------------------------------------------------
-# rollback_runtime
-# ---------------------------------------------------------------------------
-
 class TestRollbackRuntime:
     def test_restores_from_original_codes_dict(self, clean_env):
         """When _ORIGINAL_CODES has an entry, rollback_runtime restores it."""
@@ -216,18 +178,13 @@ class TestRollbackRuntime:
 
         original_code = my_func.__code__
 
-        # Simulate that CodeSuture saved the original and patched the function
         func_key = f"{my_func.__code__.co_filename}:{my_func.__code__.co_name}"
         _ORIGINAL_CODES[func_key] = original_code
 
-        # The function is still reachable via gc, so rollback_runtime should
-        # find it. The call returns True/False. We mainly verify no crash.
         result = rollback_runtime("my_func")
-        # Whether or not the live function was found, the dict entry is
-        # consumed on success. At minimum we assert no exception.
+
         assert isinstance(result, bool)
 
-        # Clean up
         _ORIGINAL_CODES.pop(func_key, None)
 
     def test_returns_false_when_nothing_found(self, clean_env, capsys):

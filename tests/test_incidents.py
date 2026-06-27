@@ -12,20 +12,15 @@ from codesuture.incidents.severity import classify_severity
 from codesuture.incidents.incident_log import IncidentLogger
 from codesuture.incidents.digest import DigestGenerator
 
-
-# ---------------------------------------------------------------------------
-# IncidentRecord
-# ---------------------------------------------------------------------------
-
 class TestIncidentRecord:
     def test_create_defaults(self):
         """IncidentRecord creates with sensible defaults."""
         rec = IncidentRecord()
-        assert rec.incident_id  # non-empty UUID
-        assert rec.timestamp  # non-empty ISO timestamp
+        assert rec.incident_id
+        assert rec.timestamp
         assert rec.severity == Severity.MEDIUM
         assert rec.status == IncidentStatus.PATCHED
-        assert rec.python_version  # e.g. "3.11.x"
+        assert rec.python_version
 
     def test_to_dict_roundtrip(self):
         """to_dict → from_dict preserves all fields."""
@@ -77,11 +72,6 @@ class TestIncidentRecord:
         assert rec.exception_type == "KeyError"
         assert rec.severity == Severity.LOW
 
-
-# ---------------------------------------------------------------------------
-# Severity classification
-# ---------------------------------------------------------------------------
-
 class TestSeverityClassification:
     def test_callable_guard_always_critical(self):
         assert classify_severity("callable_guard") == Severity.CRITICAL
@@ -110,11 +100,6 @@ class TestSeverityClassification:
     def test_standard_guard_medium(self):
         assert classify_severity("null_guard", hit_count=1) == Severity.MEDIUM
         assert classify_severity("key_guard", hit_count=2) == Severity.MEDIUM
-
-
-# ---------------------------------------------------------------------------
-# IncidentLogger
-# ---------------------------------------------------------------------------
 
 class TestIncidentLogger:
     @pytest.fixture(autouse=True)
@@ -173,11 +158,6 @@ class TestIncidentLogger:
         assert counts["HIGH"] == 2
         assert counts["MEDIUM"] == 1
         assert counts["LOW"] == 0
-
-
-# ---------------------------------------------------------------------------
-# DigestGenerator
-# ---------------------------------------------------------------------------
 
 class TestDigestGenerator:
     @pytest.fixture(autouse=True)

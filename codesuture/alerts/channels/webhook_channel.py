@@ -7,12 +7,11 @@ from codesuture.incidents.incident import IncidentRecord, Severity
 
 _log = logging.getLogger(__name__)
 
-
 class WebhookChannel:
     def __init__(self, url: str, headers: Dict[str, str] = None, format: str = 'raw'):
         self.url = url
         self.headers = headers or {}
-        self.format = format  # 'slack', 'discord', 'teams', 'raw'
+        self.format = format
 
     def send(self, incident: IncidentRecord) -> bool:
         """Send incident to webhook. Returns True on success."""

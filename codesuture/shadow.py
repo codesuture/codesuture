@@ -15,14 +15,12 @@ from enum import Enum
 
 _log = logging.getLogger(__name__)
 
-
 class ShadowVerdict(Enum):
-    PATCH_JUSTIFIED = "patch_justified"      # Original crashed, patch saved it
-    PATCH_UNNECESSARY = "patch_unnecessary"  # Original succeeded, patch may not be needed
-    PATCH_DIVERGENT = "patch_divergent"      # Original returned different value
-    SHADOW_ERROR = "shadow_error"            # Could not run shadow execution
-    NOT_RUN = "not_run"                      # Shadow was not executed
-
+    PATCH_JUSTIFIED = "patch_justified"
+    PATCH_UNNECESSARY = "patch_unnecessary"
+    PATCH_DIVERGENT = "patch_divergent"
+    SHADOW_ERROR = "shadow_error"
+    NOT_RUN = "not_run"
 
 @dataclass
 class ShadowResult:
@@ -49,16 +47,12 @@ class ShadowResult:
         }
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Sentinel detection (backward compat)
-# ──────────────────────────────────────────────────────────────────────
-
 SENTINEL_VALUES = {"", 0, 0.0, None, False, (), frozenset()}
 
 def is_sentinel(value) -> bool:
     """Check if a value looks like a CodeSuture default sentinel."""
     try:
-        # Check unhashable sentinels first
+
         if value == [] or value == {}:
             return True
         if value in SENTINEL_VALUES:
@@ -66,7 +60,6 @@ def is_sentinel(value) -> bool:
     except Exception:
         pass
     return False
-
 
 def shadow_check(func_name: str, return_value, guard_type: str):
     """Legacy shadow check — warns on sentinel return values."""
@@ -76,11 +69,6 @@ def shadow_check(func_name: str, return_value, guard_type: str):
             f"value {return_value!r} after {guard_type} patch. "
             f"Verify this default is safe for downstream consumers."
         )
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Real shadow executor
-# ──────────────────────────────────────────────────────────────────────
 
 class ShadowExecutor:
     """Runs original code alongside patched code to verify patches.
@@ -147,7 +135,6 @@ class ShadowExecutor:
 
         print(f"[CodeSuture] Shadow warning: shallow copy used — nested mutations may affect verdict for {func_key}")
 
-        # Temporarily swap to original code and run (serialized per function)
         with func_lock:
             try:
                 current_code = patched_func.__code__
@@ -168,7 +155,6 @@ class ShadowExecutor:
                     result.original_result = original_result
                     result.original_crashed = False
 
-                    # Compare results
                     try:
                         results_match = original_result == patched_result
                     except Exception:
@@ -193,9 +179,9 @@ class ShadowExecutor:
                     result.verdict = ShadowVerdict.SHADOW_ERROR
                     _log.error('[Shadow] Timeout executing original code for %s', func_key)
                 except Exception as e:
-                    # If it's a TimeoutError from another source or just the actual crash
+
                     real_e = e.args[0] if isinstance(e, getattr(concurrent.futures, 'TimeoutError', type(None))) else e
-                    # Original crashed — this confirms the patch was needed
+
                     result.original_crashed = True
                     result.original_exception = f"{type(e).__name__}: {e}"
                     result.verdict = ShadowVerdict.PATCH_JUSTIFIED
@@ -203,7 +189,7 @@ class ShadowExecutor:
                               func_key, result.original_exception)
 
                 finally:
-                    # ALWAYS restore patched code
+
                     patched_func.__code__ = current_code
 
             except Exception as e:
@@ -211,11 +197,9 @@ class ShadowExecutor:
                 _log.error('[Shadow] Error during shadow execution of %s: %s',
                           func_key, e)
 
-        # Store result
         with self._lock:
             self._shadow_results[func_key] = result
 
-        # Print warning for interesting cases
         if result.verdict == ShadowVerdict.PATCH_UNNECESSARY:
             print(
                 f"[CodeSuture SHADOW] ⚠ {func_key}: original code succeeded "

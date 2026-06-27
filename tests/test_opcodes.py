@@ -27,11 +27,6 @@ from codesuture.opcodes import (
     PY_VERSION,
 )
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 class TestConstants:
     def test_jump_if_false_is_string(self):
         assert isinstance(JUMP_IF_FALSE, str)
@@ -62,11 +57,6 @@ class TestConstants:
             assert JUMP_IF_FALSE == "POP_JUMP_FORWARD_IF_FALSE"
             assert JUMP_IF_TRUE == "POP_JUMP_FORWARD_IF_TRUE"
 
-
-# ---------------------------------------------------------------------------
-# make_load_global
-# ---------------------------------------------------------------------------
-
 class TestMakeLoadGlobal:
     def test_returns_correct_format(self):
         result = make_load_global("foo")
@@ -89,11 +79,6 @@ class TestMakeLoadGlobal:
             assert result == (False, "baz")
         else:
             assert result == "baz"
-
-
-# ---------------------------------------------------------------------------
-# Instruction builders
-# ---------------------------------------------------------------------------
 
 class TestEmitCall:
     def test_returns_list(self):
@@ -120,7 +105,6 @@ class TestEmitCall:
             assert "PRECALL" not in opnames
             assert len(result) == 1
 
-
 class TestEmitLoadMethod:
     def test_returns_instr(self):
         result = emit_load_method("my_method")
@@ -134,7 +118,6 @@ class TestEmitLoadMethod:
         result = emit_load_method("some_attr")
         assert result.arg == "some_attr"
 
-
 class TestEmitJumpIfFalse:
     def test_returns_instr(self):
         label = Label()
@@ -146,7 +129,6 @@ class TestEmitJumpIfFalse:
         result = emit_jump_if_false(label)
         assert result.name == JUMP_IF_FALSE
 
-
 class TestEmitJumpIfTrue:
     def test_returns_instr(self):
         label = Label()
@@ -157,7 +139,6 @@ class TestEmitJumpIfTrue:
         label = Label()
         result = emit_jump_if_true(label)
         assert result.name == JUMP_IF_TRUE
-
 
 class TestEmitLoadGlobal:
     def test_returns_instr(self):
@@ -172,11 +153,6 @@ class TestEmitLoadGlobal:
         result = emit_load_global("open", push_null=True)
         assert isinstance(result, Instr)
         assert result.name == "LOAD_GLOBAL"
-
-
-# ---------------------------------------------------------------------------
-# Opcode name sets
-# ---------------------------------------------------------------------------
 
 class TestOpcodeSets:
     ALL_SETS = [

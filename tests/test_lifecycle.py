@@ -7,11 +7,6 @@ from datetime import datetime, timezone, timedelta
 
 from codesuture.lifecycle import PatchState, PatchLifecycle, LifecycleManager
 
-
-# ---------------------------------------------------------------------------
-# PatchState enum
-# ---------------------------------------------------------------------------
-
 class TestPatchState:
     def test_all_states_exist(self):
         expected = ['detected', 'patched', 'replayed', 'persisted',
@@ -21,11 +16,6 @@ class TestPatchState:
 
     def test_state_count(self):
         assert len(PatchState) == 9
-
-
-# ---------------------------------------------------------------------------
-# PatchLifecycle
-# ---------------------------------------------------------------------------
 
 class TestPatchLifecycle:
     def test_defaults(self):
@@ -74,17 +64,12 @@ class TestPatchLifecycle:
         """Patch exactly ttl_days old should be expired (>= not >)."""
         exact_time = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         p = PatchLifecycle(created_at=exact_time, ttl_days=7)
-        assert p.is_expired() is True  # >= catches the boundary
+        assert p.is_expired() is True
 
     def test_age_days(self):
         old_time = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         p = PatchLifecycle(created_at=old_time)
         assert p.age_days() == 5
-
-
-# ---------------------------------------------------------------------------
-# LifecycleManager
-# ---------------------------------------------------------------------------
 
 class TestLifecycleManager:
     @pytest.fixture(autouse=True)
@@ -108,11 +93,11 @@ class TestLifecycleManager:
         self.mgr.track('myapp', 'fn', 'null_guard', PatchState.PATCHED)
         self.mgr.track('myapp', 'fn', 'null_guard', PatchState.PATCHED)
         p = self.mgr.get(self.mgr._make_id('myapp', 'fn', 'null_guard'))
-        assert len(p.transitions) == 1  # Only one transition
+        assert len(p.transitions) == 1
 
     def test_persistence_across_reloads(self):
         self.mgr.track('myapp', 'get_bio', 'null_guard')
-        # Create new manager from same dir
+
         mgr2 = LifecycleManager(store_dir=self.store_dir)
         p = mgr2.get(mgr2._make_id('myapp', 'get_bio', 'null_guard'))
         assert p is not None

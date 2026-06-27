@@ -11,22 +11,12 @@ from codesuture.suggest import (
     _extract_owner, _extract_container, _extract_func,
 )
 
-
-# ---------------------------------------------------------------------------
-# FixSuggestion dataclass
-# ---------------------------------------------------------------------------
-
 class TestFixSuggestion:
     def test_defaults(self):
         s = FixSuggestion()
         assert s.confidence == "LIKELY"
         assert s.guard_type == ""
         assert s.diff == ""
-
-
-# ---------------------------------------------------------------------------
-# generate_suggestion
-# ---------------------------------------------------------------------------
 
 class TestGenerateSuggestion:
     def _make_incident(self, **kwargs):
@@ -168,11 +158,6 @@ class TestGenerateSuggestion:
             assert s is not None, f"{guard_type} produced None"
             assert s.guard_type == guard_type
 
-
-# ---------------------------------------------------------------------------
-# format_suggestion
-# ---------------------------------------------------------------------------
-
 class TestFormatSuggestion:
     def test_format_output(self):
         s = FixSuggestion(
@@ -194,11 +179,6 @@ class TestFormatSuggestion:
         assert 'Original:' in output
         assert 'Suggested fix:' in output
 
-
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
 class TestHelpers:
     def test_extract_owner_dotted(self):
         assert _extract_owner('user.profile', '') == 'user'
@@ -208,7 +188,7 @@ class TestHelpers:
 
     def test_extract_owner_simple_with_exc_msg(self):
         result = _extract_owner('data', "'NoneType' has no attribute 'bio'")
-        assert result == 'data'  # target IS the None object
+        assert result == 'data'
 
     def test_extract_owner_simple_no_match(self):
         result = _extract_owner('data', 'some random error')
@@ -245,7 +225,6 @@ class TestHelpers:
         """When target isn't found, wrap the whole expression."""
         result = _build_str_coerce_fix('x + y', 'z')
         assert result == 'str(x + y)'
-
 
 class TestConfidenceLevels:
     """Tests for confidence level assignment including VERIFIED."""

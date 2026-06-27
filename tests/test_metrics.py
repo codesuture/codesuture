@@ -7,7 +7,6 @@ from datetime import datetime, timezone, timedelta
 
 from codesuture.metrics import MetricsCollector
 
-
 class TestMetricsCollector:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
@@ -65,13 +64,13 @@ class TestMetricsCollector:
             {'current_state': 'fixed', 'created_at': datetime.now(timezone.utc).isoformat(), 'ttl_days': 7},
         ])
         metrics = self.collector.collect()
-        assert metrics['codesuture_patches_active'] == 2  # patched + persisted
+        assert metrics['codesuture_patches_active'] == 2
 
     def test_ttl_expiring_soon(self):
         old_time = (datetime.now(timezone.utc) - timedelta(days=6)).isoformat()
         self._write_lifecycle([
-            {'current_state': 'patched', 'created_at': old_time, 'ttl_days': 7},  # Expiring soon
-            {'current_state': 'fixed', 'created_at': old_time, 'ttl_days': 7},     # Fixed, skip
+            {'current_state': 'patched', 'created_at': old_time, 'ttl_days': 7},
+            {'current_state': 'fixed', 'created_at': old_time, 'ttl_days': 7},
         ])
         metrics = self.collector.collect()
         assert metrics['codesuture_ttl_expiring_soon'] == 1

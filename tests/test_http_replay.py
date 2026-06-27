@@ -8,7 +8,6 @@ import json
 import pytest
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-
 class _TestHandler(BaseHTTPRequestHandler):
     """Handler with intentional bugs for testing."""
 
@@ -21,7 +20,7 @@ class _TestHandler(BaseHTTPRequestHandler):
 
         elif self.path == '/crash-null':
             data = None
-            result = data.strip()  # Will crash
+            result = data.strip()
             self.send_response(200)
             self.end_headers()
             self.wfile.write(result.encode())
@@ -31,8 +30,7 @@ class _TestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        pass  # Suppress HTTP logs during tests
-
+        pass
 
 @pytest.fixture
 def http_server():
@@ -43,7 +41,6 @@ def http_server():
     thread.start()
     yield f'http://127.0.0.1:{port}'
     server.shutdown()
-
 
 class TestHttpReplay:
 
@@ -59,11 +56,11 @@ class TestHttpReplay:
         from http.client import RemoteDisconnected
         try:
             urllib.request.urlopen(f'{http_server}/crash-null')
-            # If somehow succeeds, that's fine too (CodeSuture may be active)
+
         except urllib.error.HTTPError as e:
             assert e.code == 500
         except RemoteDisconnected:
-            # Server crashed before sending any response — expected
+
             pass
 
     def test_404_endpoint(self, http_server):
@@ -92,12 +89,11 @@ class TestHttpReplay:
 
     def test_server_stays_up_after_crash(self, http_server):
         """Server should stay running even after a crash on one endpoint."""
-        # Hit crash endpoint
+
         try:
             urllib.request.urlopen(f'{http_server}/crash-null')
         except Exception:
             pass
 
-        # Hit healthy endpoint — server should still be alive
         resp = urllib.request.urlopen(f'{http_server}/healthy')
         assert resp.status == 200

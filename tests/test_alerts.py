@@ -12,11 +12,6 @@ from codesuture.alerts.channels.file_channel import FileAlertChannel
 from codesuture.alerts.channels.webhook_channel import WebhookChannel
 from codesuture.incidents.incident import IncidentRecord, Severity, IncidentStatus
 
-
-# ---------------------------------------------------------------------------
-# AlertConfig
-# ---------------------------------------------------------------------------
-
 class TestAlertConfig:
     def test_default_config(self):
         cfg = AlertConfig()
@@ -68,11 +63,6 @@ escalate_to = "CRITICAL"
         assert cfg.escalation.repeat_threshold == 3
         assert cfg.escalation.repeat_window_hours == 12
 
-
-# ---------------------------------------------------------------------------
-# FileAlertChannel
-# ---------------------------------------------------------------------------
-
 class TestFileAlertChannel:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path):
@@ -97,7 +87,7 @@ class TestFileAlertChannel:
         inc = self._make_incident()
         filename = self.channel.send(inc)
         assert filename.startswith("ALERT_")
-        assert "_HIGH_" in filename  # severity in filename
+        assert "_HIGH_" in filename
         assert filename.endswith(".md")
         filepath = os.path.join(self.alert_dir, filename)
         assert os.path.isfile(filepath)
@@ -128,24 +118,19 @@ class TestFileAlertChannel:
         self.channel.send(inc)
         result = self.channel.dismiss(inc.incident_id)
         assert result is True
-        # File should be gone
+
         md_files = [f for f in os.listdir(self.alert_dir)
                     if f.endswith('.md') and f != 'unread.md']
         assert len(md_files) == 0
 
     def test_dismiss_all(self):
         self.channel.send(self._make_incident(function="fn1"))
-        import time; time.sleep(0.01)  # Ensure different timestamps
+        import time; time.sleep(0.01)
         self.channel.send(self._make_incident(function="fn2"))
         file_count = len(os.listdir(self.alert_dir))
-        assert file_count >= 2  # At least alerts + unread.md
+        assert file_count >= 2
         self.channel.dismiss_all()
         assert len(os.listdir(self.alert_dir)) == 0
-
-
-# ---------------------------------------------------------------------------
-# WebhookChannel (format tests only — no real HTTP)
-# ---------------------------------------------------------------------------
 
 class TestWebhookChannel:
     def _make_incident(self):
@@ -172,7 +157,7 @@ class TestWebhookChannel:
         assert "embeds" in payload
         embed = payload["embeds"][0]
         assert "fields" in embed
-        assert embed["color"] == 0xFFA500  # HIGH = orange
+        assert embed["color"] == 0xFFA500
 
     def test_teams_format(self):
         ch = WebhookChannel(url="https://example.com", format="teams")
@@ -190,11 +175,6 @@ class TestWebhookChannel:
         ch = WebhookChannel(url="")
         result = ch.send(self._make_incident())
         assert result is False
-
-
-# ---------------------------------------------------------------------------
-# AlertRouter
-# ---------------------------------------------------------------------------
 
 class TestAlertRouter:
     @pytest.fixture(autouse=True)
@@ -239,7 +219,6 @@ class TestAlertRouter:
             inc = self._make_incident(severity=Severity.MEDIUM, function="broken_fn")
             router.route(inc)
 
-        # The 3rd incident should have been escalated to CRITICAL
         assert inc.severity == Severity.CRITICAL
 
     def test_dismiss_all(self):

@@ -4,13 +4,10 @@ import os
 import json
 from typing import List
 
-
-# Default candidate directories for patch storage
 _STORE_CANDIDATES = [
     ".codesuture_cache", ".codesuture_store",
     ".codesuture", "codesuture_patches",
 ]
-
 
 def find_patch_store(explicit_path: str = None) -> str | None:
     """Locate the patch store directory.
@@ -25,7 +22,6 @@ def find_patch_store(explicit_path: str = None) -> str | None:
         if os.path.exists(c):
             return c
     return None
-
 
 def load_all_patches(store_path: str) -> List[dict]:
     """Load every patch metadata JSON from *store_path*.

@@ -8,12 +8,10 @@ from datetime import datetime, timezone
 
 from codesuture.persistence import CACHE_DIR
 
-
 def rollback_runtime(name):
     """Restore original code for a function at runtime."""
     restored = False
 
-    # Try from in-memory _ORIGINAL_CODES first
     try:
         from codesuture.tracer import _ORIGINAL_CODES
     except ImportError:
@@ -21,9 +19,7 @@ def rollback_runtime(name):
 
     for func_key, original_code in list(_ORIGINAL_CODES.items()):
         if func_key.endswith(f":{name}"):
-            # Search for functions whose current code has the same co_name
-            # The patched code replaced the original, so we look for functions
-            # with a code object named `name`
+
             import sys
             import warnings
             for mod in list(sys.modules.values()):
@@ -45,7 +41,7 @@ def rollback_runtime(name):
                     break
 
             if not restored:
-                # Also try gc.get_referrers on all code objects to find the patched one
+
                 for obj in gc.get_objects():
                     if isinstance(obj, types.FunctionType) and obj.__code__.co_name == name and obj.__code__ is not original_code:
                         obj.__code__ = original_code
@@ -57,7 +53,6 @@ def rollback_runtime(name):
                 del _ORIGINAL_CODES[func_key]
                 break
 
-    # If not found in _ORIGINAL_CODES, try loading from .orig.code file in the store
     if not restored and os.path.isdir(CACHE_DIR):
         import marshal
         for fname in os.listdir(CACHE_DIR):
@@ -82,10 +77,8 @@ def rollback_runtime(name):
 
     return restored
 
-
 def rollback_function(name):
 
-    # Restore runtime code first, before deleting persisted files
     rollback_runtime(name)
 
     if not os.path.isdir(CACHE_DIR):
@@ -95,7 +88,6 @@ def rollback_function(name):
     removed = 0
     for fname in list(os.listdir(CACHE_DIR)):
 
-        # Strip known extensions to get the base name
         base = fname
         for ext in ('.orig.code', '.code', '.json'):
             if fname.endswith(ext):
@@ -109,7 +101,7 @@ def rollback_function(name):
             removed += 1
 
     if removed > 0:
-        # Sync lifecycle state so lifecycle show/stale/digest are accurate
+
         try:
             from codesuture.lifecycle import LifecycleManager
             LifecycleManager().mark_rolled_back(name)
@@ -133,7 +125,6 @@ def rollback_all():
         print("[CodeSuture] Nothing to roll back.")
         return
 
-    # Sync lifecycle state for all tracked patches
     try:
         from codesuture.lifecycle import LifecycleManager, PatchState
         lm = LifecycleManager()

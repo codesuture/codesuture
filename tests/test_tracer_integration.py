@@ -8,13 +8,11 @@ from codesuture.pattern_matcher import analyze_exception
 from codesuture.guard_synthesizer import synthesize_guarded_code
 from codesuture.code_replacer import replace_function_code, get_function_from_frame
 
-
 def _get_inner_frame(tb):
     """Walk to innermost traceback frame (inside the function, not the test)."""
     while tb.tb_next:
         tb = tb.tb_next
     return tb.tb_frame, tb
-
 
 class TestTracerIntegration:
     """Real crash → patch → verify without mocking."""
@@ -39,7 +37,7 @@ class TestTracerIntegration:
                 assert isinstance(result, str) or result is None or result == ''
             else:
                 # Pattern matcher may not find spec for this bytecode layout
-                # which is fine — the tracer has additional heuristics
+
                 pass
 
     def test_key_error_crash_patched(self):
@@ -59,7 +57,6 @@ class TestTracerIntegration:
                 new_code = new_bc.to_code()
                 get_config.__code__ = new_code
                 result = get_config({})
-                # Should not crash
 
     def test_zero_division_patched(self):
         """Division by zero → patches → returns default."""
@@ -78,9 +75,9 @@ class TestTracerIntegration:
                 new_code = new_bc.to_code()
                 compute_ratio.__code__ = new_code
                 result = compute_ratio(10, 0)
-                # Guard substitutes default divisor (1) for zero
+
                 assert result == 10.0, f"Expected 10.0 for 10/0→10/1, got {result}"
-                # Negative divisors must NOT be replaced — they are valid
+
                 result_neg = compute_ratio(10, -5)
                 assert result_neg == -2.0, (
                     f"Negative divisor corrupted: expected -2.0, got {result_neg}. "
@@ -103,7 +100,6 @@ class TestTracerIntegration:
                 new_code = new_bc.to_code()
                 get_first.__code__ = new_code
                 result = get_first([1, 2])
-                # Should not crash
 
     def test_type_error_string_concat(self):
         """String + int TypeError → patches → returns concatenated string."""
@@ -151,10 +147,9 @@ class TestTracerIntegration:
         """
         from datetime import datetime, timezone
 
-        # Build the same timestamp the tracer builds at line 233
         ts = datetime.now(timezone.utc).isoformat()
         parsed = datetime.fromisoformat(ts)
         assert parsed.tzinfo is not None, "Timestamp must be timezone-aware"
-        # Arithmetic against UTC must not raise
+
         diff = datetime.now(timezone.utc) - parsed
         assert diff.total_seconds() >= 0

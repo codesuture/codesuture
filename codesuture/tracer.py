@@ -13,7 +13,7 @@ _PYTHON_PREFIX = os.path.normcase(os.path.abspath(sys.prefix)) + os.sep
 _PYTHON_BASE_PREFIX = os.path.normcase(os.path.abspath(sys.base_prefix)) + os.sep
 _CODESUTURE_ROOT = os.path.normcase(os.path.abspath(os.path.dirname(__file__))) + os.sep
 
-_ORIGINAL_CODES = {}  # {func_key: original_code_object}
+_ORIGINAL_CODES = {}
 
 def _is_internal_frame(frame):
 
@@ -36,7 +36,6 @@ class _CodeSutureFallbackSuppression(Exception):
     """Internal control signal to quietly abort frame evaluation without console traceback."""
     pass
 
-
 class CodeSutureTracer:
     def __init__(self, dry_run=False, log_file=None, max_retries=3, autonomous=False, script_path=None, verbose=False, shadow=False, ttl=7, silent=False, rewind=False, rewind_depth=500):
         import threading
@@ -51,7 +50,6 @@ class CodeSutureTracer:
         self.silent = silent
         self.rewind_enabled = rewind
 
-        # Phase 9 (v2): Rewind crash forensics
         self._rewind_buffer = None
         if rewind:
             try:
@@ -82,10 +80,9 @@ class CodeSutureTracer:
         self._handled_exc_ids = set()
         self._rewound_exc_ids = set()
         self._patch_lock = threading.Lock()
-        self._state_lock = threading.Lock()  # protects stats, attempts, exc_id sets, patched_codes reads
+        self._state_lock = threading.Lock()
         self._thread_state = threading.local()
 
-        # Phase 3+4: Incident Intelligence + Alert System
         try:
             from codesuture.incidents.incident_log import IncidentLogger
             from codesuture.alerts.router import AlertRouter
@@ -95,7 +92,6 @@ class CodeSutureTracer:
             self._incident_logger = None
             self._alert_router = None
 
-        # Phase 8: Lifecycle tracking
         try:
             from codesuture.lifecycle import LifecycleManager
             self._lifecycle_mgr = LifecycleManager()
@@ -107,7 +103,6 @@ class CodeSutureTracer:
         if getattr(threading.current_thread(), '_is_codesuture_shadow', False):
             return None
 
-        # Rewind capture: record call/return/exception events
         if self._rewind_buffer is not None:
             try:
                 from codesuture.rewind.tracer import rewind_trace_callback
@@ -143,11 +138,11 @@ class CodeSutureTracer:
                 args_copy = self._shadow_args_cache.pop(id(frame), {})
                 if self.shadow_executor is not None:
                     func_key = f"{frame.f_code.co_filename}:{frame.f_code.co_name}"
-                    # Find the function object to pass to shadow_execute
+
                     from codesuture.code_replacer import get_function_from_frame
                     func = get_function_from_frame(frame)
                     if func:
-                        # Extract positional and keyword arguments correctly
+
                         # Best effort: pass args_copy as kwargs to avoid pos/kw mismatches
                         res = self.shadow_executor.shadow_execute(
                             func_key, func, arg, args=(), kwargs=args_copy, guard_type=guard_type
@@ -190,12 +185,12 @@ class CodeSutureTracer:
         import dataclasses, uuid as _uuid
         try:
             fp = compute_fingerprint(frame.f_code, frame.f_lasti, 'shadow')
-            # Find the latest incident with this fingerprint (search last 30 days)
+
             from datetime import datetime, timezone, timedelta
             incidents = self._incident_logger.get_incidents(since=datetime.now(timezone.utc) - timedelta(days=30))
             matching = [inc for inc in incidents if inc.fingerprint == fp]
             if not matching:
-                # Fall back: match by function name + guard_type
+
                 func_name = frame.f_code.co_name
                 matching = [inc for inc in incidents
                             if inc.function == func_name and inc.guard_type == guard_type]
@@ -438,7 +433,7 @@ class CodeSutureTracer:
                         if self.shadow_executor is not None:
                             func_key = f"{old_code.co_filename}:{old_code.co_name}"
                             self.shadow_executor.register_original(func_key, old_code)
-                            # Capture args at patch time for shadow comparison
+
                             try:
                                 import copy
                                 argcount = old_code.co_argcount + old_code.co_kwonlyargcount
@@ -476,7 +471,6 @@ class CodeSutureTracer:
                 if not self.silent:
                     print(f"[CodeSuture] Patch applied to {getattr(func, '__name__', 'unknown')}().")
 
-                # Dump rewind buffer on crash
                 if self._rewind_buffer is not None:
                     try:
                         from codesuture.rewind.persistence import save_rewind_dump
@@ -497,7 +491,6 @@ class CodeSutureTracer:
                     except Exception:
                         pass
 
-                # Log incident
                 self._log_incident(
                     frame=frame, exc_type=exc_type, exc_value=exc_value,
                     exc_tb=exc_tb, spec=spec, status='patched',
@@ -513,9 +506,7 @@ class CodeSutureTracer:
                             if self.shadow_mode and self.shadow_executor is not None:
                                 func_key = f"{old_code.co_filename}:{old_code.co_name}"
                                 self.shadow_executor.register_original(func_key, old_code)
-                                # Capture args NOW, before rewind. The 'call' event fired
-                                # before the patch existed, so args were never captured there.
-                                # Rewind doesn't trigger a new 'call' event either.
+
                                 try:
                                     import copy
                                     argcount = old_code.co_argcount + old_code.co_kwonlyargcount
@@ -654,8 +645,7 @@ class CodeSutureTracer:
                     except Exception:
                         pass
             elif isinstance(ref, tuple):
-                # ref is likely a co_consts tuple in a parent code object
-                # Find functions that own code objects containing this tuple
+
                 for code_ref in gc.get_referrers(ref):
                     if isinstance(code_ref, types.CodeType) and ref == code_ref.co_consts:
                         new_consts = list(ref)
@@ -710,7 +700,6 @@ class CodeSutureTracer:
             func_name = getattr(func, '__qualname__', '') or getattr(func, '__name__', '') or frame.f_code.co_name
             module = getattr(func, '__module__', '') or '__main__'
 
-            # Compute fingerprint hit count
             hit_count = 0
             if fingerprint:
                 from codesuture.fingerprint import lookup
@@ -727,7 +716,6 @@ class CodeSutureTracer:
                 default_value=spec.default_value,
             )
 
-            # Build stack trace
             stack_lines = []
             try:
                 if exc_tb:
@@ -735,7 +723,6 @@ class CodeSutureTracer:
             except Exception:
                 pass
 
-            # Map status string to enum
             try:
                 inc_status = IncidentStatus(status)
             except ValueError:
@@ -762,7 +749,6 @@ class CodeSutureTracer:
                 thread_name=threading.current_thread().name,
             )
 
-            # Phase 5: Generate source-level fix suggestion
             try:
                 from codesuture.suggest import generate_suggestion
                 suggestion = generate_suggestion(incident)
@@ -774,11 +760,9 @@ class CodeSutureTracer:
 
             self._incident_logger.log_incident(incident)
 
-            # Route through alert system
             if self._alert_router is not None:
                 self._alert_router.route(incident)
 
-            # Phase 8: Track lifecycle state
             if self._lifecycle_mgr is not None:
                 try:
                     from codesuture.lifecycle import PatchState
@@ -796,7 +780,7 @@ class CodeSutureTracer:
                         ttl_days=self.ttl,
                         reason=f"{exc_type.__name__}: {str(exc_value)[:80]}",
                     )
-                    # If suggestion was generated, advance to SUGGESTED
+
                     if incident.suggested_fix:
                         self._lifecycle_mgr.track(
                             module=module,
@@ -808,7 +792,7 @@ class CodeSutureTracer:
                     pass
 
         except Exception:
-            # Never let incident logging crash the tracer
+
             pass
 
     def _is_http_handler_frame(self, frame):
@@ -927,7 +911,6 @@ class CodeSutureTracer:
 _original_excepthook = None
 _original_http_handle_one_request = None
 _original_print = None
-
 
 def _install_http_transaction_replay(tracer):
     global _original_http_handle_one_request, _original_print
@@ -1083,7 +1066,6 @@ def _install_http_transaction_replay(tracer):
 
     BaseHTTPRequestHandler.handle_one_request = _codesuture_handle_one_request
 
-
 def _uninstall_http_transaction_replay():
     global _original_http_handle_one_request, _original_print
     try:
@@ -1108,7 +1090,7 @@ def _codesuture_excepthook(tracer, exc_type, exc_value, exc_tb):
         if exc_id in tracer._rewound_exc_ids:
             if tracer.silent:
                 return
-            # Print a structured summary instead of fully suppressing
+
             func_name = exc_tb.tb_frame.f_code.co_name if exc_tb else exc_type.__name__
             print(f"[CodeSuture] Self-healed: {exc_type.__name__} in {func_name}()")
             print(f"[CodeSuture]   Guard applied, execution rewound successfully")
@@ -1126,14 +1108,14 @@ def _install_trace_on_all_threads(trace_fn):
     import threading
     sys.settrace(trace_fn)
     threading.settrace(trace_fn)
-    # For threads already running:
+
     for thread in threading.enumerate():
         if thread is not threading.current_thread():
             try:
                 import ctypes
                 ctypes.pythonapi.PyThreadState_SetAsyncExc(
                     ctypes.c_ulong(thread.ident),
-                    None  # does not raise, just wakes thread
+                    None
                 )
             except Exception:
                 pass

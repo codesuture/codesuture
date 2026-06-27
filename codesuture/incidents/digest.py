@@ -5,7 +5,6 @@ from collections import Counter
 from codesuture.incidents.incident import IncidentRecord, Severity
 from codesuture.incidents.incident_log import IncidentLogger
 
-
 class DigestGenerator:
     def __init__(self, logger: IncidentLogger):
         self.logger = logger
@@ -18,7 +17,7 @@ class DigestGenerator:
         start = date.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         incidents = self.logger.get_incidents(since=start)
-        # Filter to only this day
+
         incidents = [i for i in incidents if i.timestamp < end.isoformat()]
 
         return self._build_digest(incidents, f'Daily Incident Report — {start.strftime("%Y-%m-%d")}', 'daily')
@@ -41,7 +40,6 @@ class DigestGenerator:
             lines.append('')
             return '\n'.join(lines)
 
-        # Summary
         severity_counts = Counter(i.severity.value for i in incidents)
         status_counts = Counter(i.status.value for i in incidents)
         unique_functions = len(set(i.function for i in incidents if i.function))
@@ -60,12 +58,11 @@ class DigestGenerator:
             lines.append(f'- **HTTP transactions replayed:** {replayed}')
         lines.append('')
 
-        # CRITICAL and HIGH priority details
         critical_high = [i for i in incidents if i.severity in (Severity.CRITICAL, Severity.HIGH)]
         if critical_high:
             lines.append('## CRITICAL & HIGH Priority')
             lines.append('')
-            # Group by function
+
             func_groups = {}
             for inc in critical_high:
                 key = inc.function or 'unknown'
@@ -88,7 +85,6 @@ class DigestGenerator:
                 lines.append(f'- **Review:** `codesuture explain {func_name}`')
                 lines.append('')
 
-        # All incidents table
         lines.append('## All Incidents')
         lines.append('')
         lines.append('| Time | Severity | Function | Guard | Target | Status |')
@@ -99,7 +95,6 @@ class DigestGenerator:
                          f'{inc.guard_type} | {inc.target_variable} | {inc.status.value} |')
         lines.append('')
 
-        # Recommended actions
         func_counts = Counter(i.function for i in incidents if i.function)
         repeat_offenders = [(f, c) for f, c in func_counts.most_common() if c >= 2]
         if repeat_offenders:

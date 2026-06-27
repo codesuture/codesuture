@@ -13,7 +13,6 @@ _log = logging.getLogger(__name__)
 
 _F_LINENO_OFFSET = None
 
-
 def _detect_f_lineno_offset(frame):
     """Scan PyFrameObject memory to find the f_lineno field offset at runtime."""
     global _F_LINENO_OFFSET
@@ -33,7 +32,6 @@ def _detect_f_lineno_offset(frame):
     )
     return None
 
-
 def rewind_frame(frame, new_code):
     """
     After code-object replacement, suppress the in-flight exception and
@@ -42,21 +40,18 @@ def rewind_frame(frame, new_code):
     Returns True on success, False if the rewind could not be performed.
     """
     try:
-        # 1. Clear the active exception from the thread state
+
         ctypes.pythonapi.PyErr_Clear()
 
-        # 2. Rewind via the Python-level f_lineno setter.
         #    In CPython 3.11+ this internally updates prev_instr
-        #    in _PyInterpreterFrame.  PyErr_Clear() above removes the
-        #    "exception event" flag so the setter accepts the jump.
+
         frame.f_lineno = new_code.co_firstlineno
         return True
     except (ValueError, OSError):
         pass
 
     # Fallback: ctypes struct-level write (CPython 3.11 ONLY)
-    # On 3.12+ the frame struct changed to _PyInterpreterFrame with embedded
-    # frames — offset scanning would write to wrong memory. Skip entirely.
+
     if sys.version_info >= (3, 12):
         return False
     try:
@@ -71,7 +66,6 @@ def rewind_frame(frame, new_code):
         return True
     except Exception:
         return False
-
 
 def rewind_frame_to_start(frame, code):
     """Legacy wrapper kept for backward compatibility."""

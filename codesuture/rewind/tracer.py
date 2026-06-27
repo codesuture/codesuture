@@ -24,14 +24,8 @@ from typing import Any, Dict, Optional
 
 from codesuture.rewind.buffer import RewindBuffer, FrameSnapshot
 
-# ---------------------------------------------------------------------------
-# Module-level singleton buffer
-# ---------------------------------------------------------------------------
 _buffer: Optional[RewindBuffer] = None
 
-# ---------------------------------------------------------------------------
-# Modules whose frames should never be recorded
-# ---------------------------------------------------------------------------
 _SKIP_MODULES: frozenset[str] = frozenset({
     'codesuture', 'importlib', '_frozen_importlib',
     '_frozen_importlib_external', 'zipimport', '_bootstrap',
@@ -40,11 +34,6 @@ _SKIP_MODULES: frozenset[str] = frozenset({
     'genericpath', 'fnmatch', '_collections_abc', 'typing', 'enum',
 })
 
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
 def _should_skip_frame(frame) -> bool:
     """Return True for internal Python, codesuture, and stdlib frames."""
     module: str = frame.f_globals.get('__name__', '')
@@ -52,7 +41,6 @@ def _should_skip_frame(frame) -> bool:
         return True
     first_part = module.split('.')[0]
     return first_part in _SKIP_MODULES
-
 
 def _safe_repr(obj: object, max_len: int = 200) -> str:
     """``repr()`` that never raises and truncates long output."""
@@ -67,15 +55,14 @@ def _safe_repr(obj: object, max_len: int = 200) -> str:
         except Exception:
             return '<unprintable>'
 
-
 def _safe_copy_args(frame) -> Dict[str, str]:
     """Capture function arguments as safe repr strings."""
     try:
         code = frame.f_code
         nargs = code.co_argcount + code.co_posonlyargcount
-        if code.co_flags & 0x04:  # *args
+        if code.co_flags & 0x04:
             nargs += 1
-        if code.co_flags & 0x08:  # **kwargs
+        if code.co_flags & 0x08:
             nargs += 1
         arg_names = code.co_varnames[:nargs]
         result: Dict[str, str] = {}
@@ -85,7 +72,6 @@ def _safe_copy_args(frame) -> Dict[str, str]:
         return result
     except Exception:
         return {}
-
 
 def _safe_copy_locals(frame) -> Dict[str, str]:
     """Capture local variables as safe repr strings (capped at 20)."""
@@ -100,15 +86,9 @@ def _safe_copy_locals(frame) -> Dict[str, str]:
     except Exception:
         return {}
 
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def get_buffer() -> Optional[RewindBuffer]:
     """Return the module-level buffer, or ``None`` if rewind is not enabled."""
     return _buffer
-
 
 def enable_rewind(max_frames: int = 500, max_age: float = 60.0) -> RewindBuffer:
     """Create (or replace) the global :class:`RewindBuffer` and return it.
@@ -121,18 +101,12 @@ def enable_rewind(max_frames: int = 500, max_age: float = 60.0) -> RewindBuffer:
     _buffer = RewindBuffer(max_frames=max_frames, max_age_seconds=max_age)
     return _buffer
 
-
 def disable_rewind() -> None:
     """Disable recording and discard the buffer."""
     global _buffer
     if _buffer is not None:
         _buffer.enabled = False
     _buffer = None
-
-
-# ---------------------------------------------------------------------------
-# Trace callback — sys.settrace compatible
-# ---------------------------------------------------------------------------
 
 def rewind_trace_callback(frame, event: str, arg):
     """``sys.settrace`` compatible callback for rewind capture.

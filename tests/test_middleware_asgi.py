@@ -8,15 +8,9 @@ import json
 import pytest
 from codesuture.middleware_asgi import CodeSutureASGIMiddleware
 
-
-# ---------------------------------------------------------------------------
-# ASGI test helpers
-# ---------------------------------------------------------------------------
-
 async def _receive():
     """Minimal ASGI receive callable."""
     return {'type': 'http.request', 'body': b''}
-
 
 class _ResponseCollector:
     """Collects ASGI response messages for assertion."""
@@ -40,7 +34,6 @@ class _ResponseCollector:
         elif message['type'] == 'http.response.body':
             self.body += message.get('body', b'')
 
-
 def _make_scope(path='/', method='GET'):
     return {
         'type': 'http',
@@ -49,11 +42,6 @@ def _make_scope(path='/', method='GET'):
         'query_string': b'',
         'headers': [],
     }
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 class TestASGIMiddleware:
 
@@ -120,7 +108,7 @@ class TestASGIMiddleware:
         """
         async def app(scope, receive, send):
             data = None
-            result = data.strip()  # Will crash
+            result = data.strip()
             await send({
                 'type': 'http.response.start',
                 'status': 200,
@@ -138,7 +126,7 @@ class TestASGIMiddleware:
             return collector
 
         collector = asyncio.run(run())
-        # At least one response message must have been sent
+
         assert len(collector.messages) >= 1, "No response messages sent"
         assert collector.status in (200, 500)
         if collector.status == 200:

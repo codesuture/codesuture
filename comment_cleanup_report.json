@@ -1,0 +1,75 @@
+{
+  ".\\codesuture\\frame_rewind.py": [
+    "# 1. Clear the active exception from the thread state",
+    "#    in _PyInterpreterFrame.  PyErr_Clear() above removes the",
+    "# On 3.12+ the frame struct changed to _PyInterpreterFrame with embedded",
+    "# frames \u2014 offset scanning would write to wrong memory. Skip entirely."
+  ],
+  ".\\codesuture\\guard_synthesizer.py": [
+    "# Dict \u2014 use safe .get()",
+    "# so the variable is guaranteed to be assigned before we check its type"
+  ],
+  ".\\codesuture\\middleware_asgi.py": [
+    "# Walk to the innermost application frame",
+    "# Dedup: don't retry same crash twice (per-line, matching tracer granularity)"
+  ],
+  ".\\codesuture\\opcodes.py": [
+    "# Jump opcodes",
+    "# Python 3.13 follows the 3.12 opcode layout for the operations we use:",
+    "# Opcode name sets \u2014 for matching in dis.get_instructions() output",
+    "# All opcode names that represent a \"call\" instruction"
+  ],
+  ".\\codesuture\\pattern_matcher.py": [
+    "# keep scanning past non-int/float CALL opcodes"
+  ],
+  ".\\codesuture\\shadow.py": [
+    "# Check unhashable sentinels first"
+  ],
+  ".\\codesuture\\tracer.py": [
+    "# Never let incident logging crash the tracer",
+    "# For threads already running:",
+    "# does not raise, just wakes thread"
+  ],
+  ".\\codesuture\\incidents\\incident.py": [
+    "# Frame rewound, re-executing"
+  ],
+  ".\\codesuture\\rewind\\tracer.py": [
+    "# Modules whose frames should never be recorded",
+    "# Trace callback \u2014 sys.settrace compatible"
+  ],
+  ".\\stress\\crash_06_threaded.py": [
+    "# Launch 20 threads hitting different user IDs (some will crash)"
+  ],
+  ".\\tests\\test_alerts_hard.py": [
+    "# AlertConfig \u2014 TOML parsing edge cases"
+  ],
+  ".\\tests\\test_incidents_hard.py": [
+    "# Mutating the dict list mutates the record (shallow copy \u2014 known behavior)",
+    "# IncidentLogger \u2014 edge cases and adversarial inputs"
+  ],
+  ".\\tests\\test_negative.py": [
+    "# New thread should not see depth=5",
+    "# Thread-local is isolated"
+  ],
+  ".\\tests\\test_opcodes.py": [
+    "# Opcode name sets"
+  ],
+  ".\\tests\\test_persistence.py": [
+    "# Legacy patch \u2014 no hash to verify, but should still load"
+  ],
+  ".\\tests\\test_rewind.py": [
+    "# 5 threads \u00d7 100 events",
+    "# Tracer integration tests",
+    "# Create a fake frame-like object"
+  ],
+  ".\\tests\\test_shadow.py": [
+    "# Function should still have patched code after all threads finish"
+  ],
+  ".\\tests\\test_tracer_integration.py": [
+    "# which is fine \u2014 the tracer has additional heuristics"
+  ],
+  ".\\tests\\test_transparency.py": [
+    "# CodeSutureTracer construction",
+    "# Tracer initial state"
+  ]
+}

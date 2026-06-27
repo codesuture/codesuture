@@ -13,20 +13,19 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from collections import deque
 
-
 @dataclass(slots=True)
 class FrameSnapshot:
     """One captured moment in the execution timeline."""
 
-    timestamp: float                    # time.monotonic()
-    event: str                          # 'call' | 'return' | 'exception'
-    function: str                       # qualified name
-    module: str                         # module path
-    lineno: int                         # source line
+    timestamp: float
+    event: str
+    function: str
+    module: str
+    lineno: int
     args: Dict[str, str]                # function arguments as safe repr strings
     locals_snapshot: Dict[str, str]     # local variables as safe repr strings
-    return_value: Optional[str] = None  # return value safe repr
-    exception: Optional[str] = None     # exception repr
+    return_value: Optional[str] = None
+    exception: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Serialise to a plain dict suitable for JSON encoding."""
@@ -41,7 +40,6 @@ class FrameSnapshot:
             'return_value': self.return_value,
             'exception': self.exception,
         }
-
 
 class RewindBuffer:
     """Thread-safe circular buffer of :class:`FrameSnapshot` objects.
@@ -62,16 +60,12 @@ class RewindBuffer:
         self._max_age = max_age_seconds
         self._enabled = True
 
-    # -- Recording -----------------------------------------------------------
-
     def record(self, snapshot: FrameSnapshot) -> None:
         """Append a snapshot.  No-op when the buffer is disabled."""
         if not self._enabled:
             return
         with self._lock:
             self._buffer.append(snapshot)
-
-    # -- Querying ------------------------------------------------------------
 
     def dump(self, last_n: int = 50) -> List[FrameSnapshot]:
         """Return the *last_n* most-recent snapshots within the age window."""
@@ -90,8 +84,6 @@ class RewindBuffer:
         with self._lock:
             self._buffer.clear()
 
-    # -- Enable / disable ----------------------------------------------------
-
     @property
     def enabled(self) -> bool:
         return self._enabled
@@ -99,8 +91,6 @@ class RewindBuffer:
     @enabled.setter
     def enabled(self, value: bool) -> None:
         self._enabled = value
-
-    # -- Container protocol --------------------------------------------------
 
     def __len__(self) -> int:
         with self._lock:

@@ -8,10 +8,7 @@ from codesuture.shadow import (
     is_sentinel, shadow_check, SENTINEL_VALUES,
 )
 
-
-# ---------------------------------------------------------------------------
 # Backward compatibility
-# ---------------------------------------------------------------------------
 
 class TestSentinelDetection:
     """Backward-compat: is_sentinel and SENTINEL_VALUES still work."""
@@ -45,11 +42,6 @@ class TestSentinelDetection:
         captured = capsys.readouterr()
         assert captured.out == ""
 
-
-# ---------------------------------------------------------------------------
-# ShadowVerdict / ShadowResult
-# ---------------------------------------------------------------------------
-
 class TestShadowDataModels:
     def test_verdict_enum_values(self):
         assert ShadowVerdict.PATCH_JUSTIFIED.value == "patch_justified"
@@ -77,11 +69,6 @@ class TestShadowDataModels:
         assert d['original_crashed'] is True
         assert d['function_name'] == 'get_bio'
 
-
-# ---------------------------------------------------------------------------
-# ShadowExecutor
-# ---------------------------------------------------------------------------
-
 class TestShadowExecutor:
 
     def _make_function(self, body_code):
@@ -103,7 +90,7 @@ class TestShadowExecutor:
         def v2(): return 2
         executor.register_original("test:fn", v1.__code__)
         executor.register_original("test:fn", v2.__code__)
-        assert executor.get_original("test:fn") is v1.__code__  # First one wins
+        assert executor.get_original("test:fn") is v1.__code__
 
     def test_shadow_execute_justified(self):
         """Original crashes, patched returns default → PATCH_JUSTIFIED."""
@@ -115,17 +102,15 @@ class TestShadowExecutor:
         def patched():
             return ""
 
-        # Store original code
         executor.register_original("test:fn", original.__code__)
 
-        # Now patched_func has patched code
         result = executor.shadow_execute(
             func_key="test:fn",
-            patched_func=original,  # We'll swap code inside
+            patched_func=original,
             patched_result="",
             guard_type="null_guard",
         )
-        # The original code crashes, so verdict should be PATCH_JUSTIFIED
+
         assert result.verdict == ShadowVerdict.PATCH_JUSTIFIED
         assert result.original_crashed is True
         assert "AttributeError" in result.original_exception
@@ -163,7 +148,7 @@ class TestShadowExecutor:
         result = executor.shadow_execute(
             func_key="test:fn",
             patched_func=fn,
-            patched_result="",  # Patched returns sentinel, original returns 42
+            patched_result="",
             guard_type="null_guard",
         )
         assert result.verdict == ShadowVerdict.PATCH_DIVERGENT
@@ -195,7 +180,6 @@ class TestShadowExecutor:
 
         executor.register_original("test:fn", original.__code__)
 
-        # Give the function the patched code
         fn = patched
         patched_code = fn.__code__
 
@@ -205,7 +189,6 @@ class TestShadowExecutor:
             patched_result="patched",
         )
 
-        # Code should be restored to patched version
         assert fn.__code__ is patched_code
         assert fn() == "patched"
 
@@ -257,8 +240,7 @@ class TestShadowExecutor:
         original_code = original.__code__
         patched_code = patched.__code__
 
-        # Shared function object
-        fn = patched  # starts with patched code
+        fn = patched
         executor.register_original("test:concurrent", original_code)
 
         errors = []
@@ -282,6 +264,6 @@ class TestShadowExecutor:
             t.join()
 
         assert len(errors) == 0
-        # Function should still have patched code after all threads finish
+
         assert fn() == "patched"
         assert fn.__code__ is patched_code

@@ -4,33 +4,29 @@ from typing import Optional, List, Dict, Any
 from enum import Enum
 import uuid
 
-
 class Severity(Enum):
-    CRITICAL = "CRITICAL"  # Callable replaced, security-sensitive, data integrity
+    CRITICAL = "CRITICAL"
     HIGH = "HIGH"          # HTTP transaction replayed, side effects possible
     MEDIUM = "MEDIUM"      # Standard guard applied, safe default
     LOW = "LOW"            # Cached fingerprint hit, known pattern
 
-
 class IncidentStatus(Enum):
-    PATCHED = "patched"           # Guard applied, running with default
+    PATCHED = "patched"
     REPLAYED = "replayed"         # HTTP transaction replayed successfully
-    REWOUND = "rewound"           # Frame rewound, re-executing
+    REWOUND = "rewound"
     FALLBACK = "fallback"         # Fallback response sent (500 JSON)
     SKIPPED = "skipped"           # Could not safely patch
-    PERSISTED = "persisted"       # Patch saved to disk
-    EXPIRED = "expired"           # TTL exceeded
-    FIXED = "fixed"               # Engineer applied permanent fix
-
+    PERSISTED = "persisted"
+    EXPIRED = "expired"
+    FIXED = "fixed"
 
 @dataclass
 class IncidentRecord:
-    # Identity
+
     incident_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     fingerprint: str = ""
 
-    # Crash context
     exception_type: str = ""
     exception_message: str = ""
     module: str = ""
@@ -39,7 +35,6 @@ class IncidentRecord:
     file_path: str = ""
     stack_trace: List[str] = field(default_factory=list)
 
-    # Patch details
     severity: Severity = Severity.MEDIUM
     status: IncidentStatus = IncidentStatus.PATCHED
     guard_type: str = ""
@@ -48,12 +43,10 @@ class IncidentRecord:
     default_rationale: str = ""
     bytecode_diff: Dict[str, int] = field(default_factory=dict)
 
-    # Engineer guidance
     suggested_fix: Optional[str] = None
     fix_confidence: Optional[str] = None
     review_priority: str = "NORMAL"
 
-    # Metadata
     python_version: str = field(default_factory=lambda: f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}.{__import__('sys').version_info.micro}")
     codesuture_version: str = ""
     ttl_days: int = 7
@@ -61,7 +54,6 @@ class IncidentRecord:
     thread_name: str = ""
     shadow_verified: bool = False
 
-    # Links
     related_incidents: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -82,7 +74,7 @@ class IncidentRecord:
             data['severity'] = Severity(data['severity'])
         if 'status' in data and isinstance(data['status'], str):
             data['status'] = IncidentStatus(data['status'])
-        # Only pass known fields
+
         known = {f.name for f in __import__('dataclasses').fields(cls)}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)

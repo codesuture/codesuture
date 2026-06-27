@@ -18,11 +18,6 @@ from codesuture.incidents.severity import classify_severity, _SENSITIVE_MODULES
 from codesuture.incidents.incident_log import IncidentLogger
 from codesuture.incidents.digest import DigestGenerator
 
-
-# ---------------------------------------------------------------------------
-# IncidentRecord — adversarial field values
-# ---------------------------------------------------------------------------
-
 class TestIncidentRecordEdgeCases:
 
     def test_incident_id_is_unique_per_instance(self):
@@ -33,12 +28,12 @@ class TestIncidentRecordEdgeCases:
     def test_incident_id_is_12_chars_hex(self):
         rec = IncidentRecord()
         assert len(rec.incident_id) == 12
-        int(rec.incident_id, 16)  # must be valid hex
+        int(rec.incident_id, 16)
 
     def test_timestamp_is_utc_iso_format(self):
         rec = IncidentRecord()
         dt = datetime.fromisoformat(rec.timestamp)
-        # Must be timezone-aware and UTC
+
         assert dt.tzinfo is not None
         assert dt.utcoffset().total_seconds() == 0
 
@@ -47,7 +42,7 @@ class TestIncidentRecordEdgeCases:
         rec = IncidentRecord(severity=Severity.CRITICAL)
         d = rec.to_dict()
         d['severity'] = 'LOW'  # mutate the dict
-        # The original record's Enum field must be unchanged
+
         assert rec.severity == Severity.CRITICAL
 
     def test_to_dict_lists_are_shallow_references(self):
@@ -56,11 +51,11 @@ class TestIncidentRecordEdgeCases:
         Engineers should copy lists if they need independence."""
         rec = IncidentRecord(related_incidents=['a', 'b'])
         d = rec.to_dict()
-        # Verify the list is in the dict
+
         assert d['related_incidents'] == ['a', 'b']
-        # Mutating the dict list mutates the record (shallow copy — known behavior)
+
         d['related_incidents'].append('c')
-        # Document: rec.related_incidents is now ['a', 'b', 'c'] (same list object)
+
         # This test ensures we know about this, not that it's safe
         assert d['related_incidents'] is rec.related_incidents
 
@@ -122,7 +117,7 @@ class TestIncidentRecordEdgeCases:
         rec = IncidentRecord(stack_trace=['frame1', 'frame2'])
         d = rec.to_dict()
         assert d['stack_trace'] == ['frame1', 'frame2']
-        # The returned list is the same object (shallow)
+
         assert d['stack_trace'] is rec.stack_trace
 
     def test_related_incidents_roundtrip(self):
@@ -131,11 +126,6 @@ class TestIncidentRecordEdgeCases:
         rec = IncidentRecord(related_incidents=ids)
         restored = IncidentRecord.from_dict(rec.to_dict())
         assert restored.related_incidents == ids
-
-
-# ---------------------------------------------------------------------------
-# Severity classification — exact boundary conditions
-# ---------------------------------------------------------------------------
 
 class TestSeverityBoundaries:
 
@@ -157,7 +147,7 @@ class TestSeverityBoundaries:
     def test_http_get_does_not_escalate(self):
         """GET requests should NOT be elevated to HIGH by http_method rule."""
         result = classify_severity('null_guard', http_method='GET', hit_count=1)
-        # hit_count=1 (not 0) so first-occurrence rule won't fire
+
         assert result == Severity.MEDIUM
 
     def test_hit_count_boundary_exactly_zero(self):
@@ -198,22 +188,17 @@ class TestSeverityBoundaries:
         Note: hit_count=0 (first occurrence) triggers the HIGH rule BEFORE the
         str_coerce LOW rule — rule ordering means first-occurrence always wins.
         """
-        # hit_count=0 → first-occurrence HIGH rule fires before str_coerce LOW
+
         assert classify_severity('str_coerce_guard', hit_count=0) == Severity.HIGH
-        # hit_count >= 1 → first-occurrence rule does not fire, str_coerce LOW applies
+
         assert classify_severity('str_coerce_guard', hit_count=1) == Severity.LOW
         assert classify_severity('str_coerce_guard', hit_count=10) == Severity.LOW
 
     def test_chain_subscript_beats_repeat_rule(self):
         """chain_subscript_guard is HIGH even at hit_count=10 (no LOW override)."""
-        # chain_subscript returns HIGH before the hit_count >= 3 LOW branch
+
         result = classify_severity('chain_subscript_guard', hit_count=10)
         assert result == Severity.HIGH
-
-
-# ---------------------------------------------------------------------------
-# IncidentLogger — edge cases and adversarial inputs
-# ---------------------------------------------------------------------------
 
 class TestIncidentLoggerEdgeCases:
 
@@ -278,10 +263,10 @@ class TestIncidentLoggerEdgeCases:
             f.write('{"this": is not valid json!!!\n')
             json.dump(good_rec.to_dict(), f, default=str)
             f.write('\n')
-            f.write('')  # empty line
+            f.write('')
 
         results = self.logger.get_today_incidents()
-        # Only the valid record should come back
+
         assert len(results) == 1
         assert results[0].exception_type == 'RealError'
 
@@ -290,7 +275,7 @@ class TestIncidentLoggerEdgeCases:
         today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         path = os.path.join(self.log_dir, f'incidents_{today}.jsonl')
         os.makedirs(self.log_dir, exist_ok=True)
-        open(path, 'w').close()  # create empty file
+        open(path, 'w').close()
 
         results = self.logger.get_today_incidents()
         assert results == []
@@ -310,7 +295,6 @@ class TestIncidentLoggerEdgeCases:
         self.logger.log_incident(IncidentRecord(function='GetUserProfile'))
         self.logger.log_incident(IncidentRecord(function='other_fn'))
 
-        # lowercase query should find the camelCase function
         results = self.logger.get_incidents(function='getuserprofile')
         assert len(results) == 1
 
@@ -352,7 +336,7 @@ class TestIncidentLoggerEdgeCases:
 
     def test_since_filter_excludes_old_incidents(self):
         """Incidents from before 'since' must not be returned."""
-        # Write a fake incident with a past timestamp directly
+
         yesterday = datetime.now(timezone.utc) - timedelta(days=2)
         yesterday_str = yesterday.strftime('%Y-%m-%d')
         old_path = os.path.join(self.log_dir, f'incidents_{yesterday_str}.jsonl')
@@ -362,24 +346,16 @@ class TestIncidentLoggerEdgeCases:
             json.dump(old_rec.to_dict(), f, default=str)
             f.write('\n')
 
-        # Log a new incident today
         self.logger.log_incident(IncidentRecord(function='new_fn'))
 
-        # Query since yesterday — should get both
         since = datetime.now(timezone.utc) - timedelta(days=3)
         all_results = self.logger.get_incidents(since=since)
         assert len(all_results) == 2
 
-        # Query since today — should get only today's
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         today_results = self.logger.get_incidents(since=today_start)
         assert len(today_results) == 1
         assert today_results[0].function == 'new_fn'
-
-
-# ---------------------------------------------------------------------------
-# IncidentLogger — concurrent access
-# ---------------------------------------------------------------------------
 
 class TestIncidentLoggerConcurrency:
 
@@ -410,7 +386,7 @@ class TestIncidentLoggerConcurrency:
             lines = [l.strip() for l in f if l.strip()]
 
         assert len(lines) == 50
-        # Every line must be valid JSON
+
         for line in lines:
             obj = json.loads(line)
             assert 'incident_id' in obj
@@ -436,11 +412,6 @@ class TestIncidentLoggerConcurrency:
             t.join()
 
         assert len(ids) == len(set(ids)), "Duplicate incident IDs generated"
-
-
-# ---------------------------------------------------------------------------
-# DigestGenerator — exact content validation
-# ---------------------------------------------------------------------------
 
 class TestDigestGeneratorHard:
 
@@ -483,8 +454,7 @@ class TestDigestGeneratorHard:
 
         content = self.gen.generate_daily()
         assert 'high_fn' in content
-        # low_fn appears only in the table, not in the CRITICAL & HIGH section
-        # Check the CRITICAL & HIGH section does not have a ### header for low_fn
+
         lines = content.split('\n')
         in_section = False
         for line in lines:
@@ -503,7 +473,7 @@ class TestDigestGeneratorHard:
 
         content = self.gen.generate_daily()
         assert 'twice_fn' in content
-        # Check recommended actions section
+
         if 'Recommended Actions' in content:
             actions_section = content.split('## Recommended Actions')[1]
             assert 'once_only' not in actions_section
@@ -535,7 +505,7 @@ class TestDigestGeneratorHard:
 
     def test_weekly_digest_spans_7_days(self):
         """Weekly digest must aggregate incidents from the last 7 days."""
-        # Write an incident 5 days ago
+
         five_ago = datetime.now(timezone.utc) - timedelta(days=5)
         date_str = five_ago.strftime('%Y-%m-%d')
         path = os.path.join(self.log_dir, f'incidents_{date_str}.jsonl')
@@ -583,7 +553,7 @@ class TestDigestGeneratorHard:
         """Unique crash patterns = unique fingerprints, not unique incidents."""
         for _ in range(5):
             rec = IncidentRecord(function='repeat_fn')
-            rec.fingerprint = 'same_fp_abc123'  # same fingerprint
+            rec.fingerprint = 'same_fp_abc123'
             self.logger.log_incident(rec)
         rec2 = IncidentRecord(function='other_fn')
         rec2.fingerprint = 'different_fp'
@@ -597,5 +567,5 @@ class TestDigestGeneratorHard:
         self.logger.log_incident(IncidentRecord(function='no_fp', fingerprint=''))
         self.logger.log_incident(IncidentRecord(function='has_fp', fingerprint='abc123'))
         content = self.gen.generate_daily()
-        # Only 1 unique pattern (the non-empty one)
+
         assert 'Unique crash patterns:** 1' in content

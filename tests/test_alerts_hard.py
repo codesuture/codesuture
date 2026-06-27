@@ -21,11 +21,6 @@ from codesuture.alerts.channels.file_channel import FileAlertChannel
 from codesuture.alerts.channels.webhook_channel import WebhookChannel
 from codesuture.incidents.incident import IncidentRecord, Severity, IncidentStatus
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _incident(severity=Severity.HIGH, function='test_fn', guard='null_guard',
               exc='AttributeError', status=IncidentStatus.PATCHED,
               suggested_fix=None, stack_trace=None):
@@ -40,12 +35,10 @@ def _incident(severity=Severity.HIGH, function='test_fn', guard='null_guard',
         guard_type=guard,
         target_variable='x',
         default_value='',
-        # Do NOT hardcode incident_id — IncidentRecord generates a unique UUID hex
-        # so concurrent callers each get a distinct filename.
+
         suggested_fix=suggested_fix,
         stack_trace=stack_trace or [],
     )
-
 
 def _router(tmp_path, *, file_enabled=True, webhook_enabled=False,
             webhook_url='', webhook_format='raw',
@@ -69,11 +62,6 @@ def _router(tmp_path, *, file_enabled=True, webhook_enabled=False,
     )
     return AlertRouter(cfg)
 
-
-# ---------------------------------------------------------------------------
-# AlertConfig — TOML parsing edge cases
-# ---------------------------------------------------------------------------
-
 class TestAlertConfigEdgeCases:
 
     def test_malformed_toml_returns_defaults(self, tmp_path):
@@ -81,7 +69,7 @@ class TestAlertConfigEdgeCases:
         bad = tmp_path / '.codesuture.toml'
         bad.write_text("this is not valid toml @@@ !!!")
         cfg = load_config(str(bad))
-        assert cfg.enabled is True  # defaults
+        assert cfg.enabled is True
         assert cfg.webhook.enabled is False
 
     def test_empty_toml_returns_defaults(self, tmp_path):
@@ -104,7 +92,7 @@ low = ["digest"]
         cfg = load_config(str(toml))
         assert 'CRITICAL' in cfg.routing
         assert 'HIGH' in cfg.routing
-        assert 'critical' not in cfg.routing  # must NOT be lowercase key
+        assert 'critical' not in cfg.routing
 
     def test_default_routing_has_all_four_severities(self):
         """Default config must route every severity level."""
@@ -125,10 +113,7 @@ low = ["digest"]
         assert cfg.webhook.enabled is False
         assert cfg.webhook.url == ''
 
-
-# ---------------------------------------------------------------------------
 # FileAlertChannel — exact file content and atomicity
-# ---------------------------------------------------------------------------
 
 class TestFileAlertChannelHard:
 
@@ -216,7 +201,7 @@ class TestFileAlertChannelHard:
         inc1 = _incident(function='fn1')
         inc2 = _incident(function='fn2')
         self.channel.send(inc1)
-        time.sleep(0.01)  # ensure distinct filenames
+        time.sleep(0.01)
         self.channel.send(inc2)
 
         result = self.channel.dismiss(inc1.incident_id)
@@ -267,11 +252,6 @@ class TestFileAlertChannelHard:
         assert errors == [], f"Concurrent send failed: {errors}"
         alert_files = [f for f in os.listdir(self.alert_dir) if f.startswith('ALERT_')]
         assert len(alert_files) == 10
-
-
-# ---------------------------------------------------------------------------
-# WebhookChannel — format correctness
-# ---------------------------------------------------------------------------
 
 class TestWebhookChannelFormats:
 
@@ -367,7 +347,7 @@ class TestWebhookChannelFormats:
         ch = WebhookChannel(url='http://x', format='raw')
         inc = self._inc()
         payload = ch._format_payload(inc)
-        # raw must be to_dict() — every field present
+
         d = inc.to_dict()
         for key in d:
             assert key in payload, f"Key '{key}' missing from raw payload"
@@ -376,7 +356,7 @@ class TestWebhookChannelFormats:
         ch = WebhookChannel(url='http://x', format='telegram')
         inc = self._inc()
         payload = ch._format_payload(inc)
-        # Should fall back to raw (to_dict)
+
         assert 'severity' in payload
         assert 'guard_type' in payload
 
@@ -441,15 +421,9 @@ class TestWebhookChannelFormats:
         with patch('urllib.request.urlopen', side_effect=fake_urlopen):
             ch.send(self._inc())
 
-        # Python's Request capitalizes header keys
         header_values = {k.lower(): v for k, v in captured.get('headers', {}).items()}
         assert 'x-api-key' in header_values
         assert header_values['x-api-key'] == 'secret123'
-
-
-# ---------------------------------------------------------------------------
-# AlertRouter — routing logic and escalation
-# ---------------------------------------------------------------------------
 
 class TestAlertRouterHard:
 
@@ -498,13 +472,11 @@ class TestAlertRouterHard:
         router = _router(tmp_path, escalation_threshold=3)
         fn = 'escalation_target_fn'
 
-        # First 2 routes: should NOT escalate (threshold is 3)
         for i in range(2):
             inc = _incident(severity=Severity.MEDIUM, function=fn)
             router.route(inc)
             assert inc.severity == Severity.MEDIUM, f"Premature escalation at hit {i+1}"
 
-        # 3rd route: SHOULD escalate
         inc = _incident(severity=Severity.MEDIUM, function=fn)
         router.route(inc)
         assert inc.severity == Severity.CRITICAL
@@ -523,12 +495,10 @@ class TestAlertRouterHard:
         router = _router(tmp_path, escalation_threshold=3, escalation_window=1)
         fn = 'pruning_test_fn'
 
-        # Inject 2 "old" timestamps directly
         old_time = datetime.now(timezone.utc) - timedelta(hours=2)
         with router._lock:
             router._escalation_tracker[fn].extend([old_time, old_time])
 
-        # Now route once — total in window = 1 (old ones pruned), no escalation
         inc = _incident(severity=Severity.MEDIUM, function=fn)
         router.route(inc)
         assert inc.severity == Severity.MEDIUM, "Old timestamps should have been pruned"
@@ -542,7 +512,7 @@ class TestAlertRouterHard:
 
         inc_b = _incident(severity=Severity.MEDIUM, function='fn_b')
         router.route(inc_b)
-        assert inc_b.severity == Severity.MEDIUM  # B not escalated
+        assert inc_b.severity == Severity.MEDIUM
 
     def test_webhook_called_for_critical(self, tmp_path):
         """Webhook channel's send() must be called for CRITICAL incidents."""
@@ -580,12 +550,11 @@ class TestAlertRouterHard:
         """flush() must deliver any batched HIGH incidents to file channel."""
         router = _router(tmp_path, routing={
             'CRITICAL': ['file'],
-            'HIGH': [],        # HIGH goes to batch only
+            'HIGH': [],
             'MEDIUM': ['digest'],
             'LOW': ['digest'],
         })
 
-        # Manually add to batch buffer instead of relying on timer
         inc = _incident(severity=Severity.HIGH)
         with router._lock:
             router._batch_buffer.append(inc)
@@ -620,7 +589,6 @@ class TestAlertRouterHard:
         mock_channel.send.side_effect = OSError("disk full")
         router._file_channel = mock_channel
 
-        # Should not raise
         router.route(_incident(severity=Severity.CRITICAL))
 
     def test_concurrent_routing_no_corruption(self, tmp_path):

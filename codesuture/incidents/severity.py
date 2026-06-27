@@ -1,8 +1,6 @@
 from codesuture.incidents.incident import Severity
 
-# Module path keywords that escalate severity
 _SENSITIVE_MODULES = {'auth', 'payment', 'security', 'admin', 'login', 'credential', 'token', 'secret', 'encrypt', 'decrypt', 'billing', 'transaction'}
-
 
 def classify_severity(guard_type: str, module: str = '', function: str = '',
                       http_method: str = '', hit_count: int = 0,
@@ -12,7 +10,6 @@ def classify_severity(guard_type: str, module: str = '', function: str = '',
     module_lower = module.lower()
     func_lower = function.lower()
 
-    # CRITICAL: callable replacement, sensitive modules
     if guard_type == 'callable_guard':
         return Severity.CRITICAL
     if any(kw in module_lower or kw in func_lower for kw in _SENSITIVE_MODULES):
@@ -27,16 +24,14 @@ def classify_severity(guard_type: str, module: str = '', function: str = '',
         return Severity.HIGH
     if guard_type == 'type_coercion_guard':
         return Severity.HIGH
-    if hit_count == 0:  # First occurrence
+    if hit_count == 0:
         return Severity.HIGH
 
-    # MEDIUM: standard guards
     if guard_type in ('null_guard', 'key_guard', 'subscript_guard', 'division_guard', 'index_guard', 'list_bound_guard'):
         if hit_count >= 3:
             return Severity.LOW
         return Severity.MEDIUM
 
-    # LOW: well-known patterns, file guard, string coercion, repeat offenders
     if guard_type in ('file_guard', 'str_coerce_guard'):
         return Severity.LOW
     if hit_count >= 3:

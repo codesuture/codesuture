@@ -4,11 +4,6 @@ import pytest
 
 from codesuture.tracer import CodeSutureTracer, _ORIGINAL_CODES
 
-
-# ---------------------------------------------------------------------------
-# CodeSutureTracer construction
-# ---------------------------------------------------------------------------
-
 class TestCodeSutureTracerConstruction:
     def test_default_silent_is_false(self):
         tracer = CodeSutureTracer()
@@ -84,11 +79,6 @@ class TestCodeSutureTracerConstruction:
         assert tracer.ttl == 14
         assert tracer.silent is True
 
-
-# ---------------------------------------------------------------------------
-# Tracer initial state
-# ---------------------------------------------------------------------------
-
 class TestTracerInitialState:
     def test_stats_initialized(self):
         tracer = CodeSutureTracer()
@@ -107,11 +97,6 @@ class TestTracerInitialState:
     def test_attempts_empty(self):
         tracer = CodeSutureTracer()
         assert tracer.attempts == {}
-
-
-# ---------------------------------------------------------------------------
-# _ORIGINAL_CODES
-# ---------------------------------------------------------------------------
 
 class TestOriginalCodesDict:
     def test_exists_and_is_dict(self):

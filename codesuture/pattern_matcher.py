@@ -219,7 +219,7 @@ def _infer_subscript_default(instructions=None, crash_idx=None):
                     if instructions[k].opname == 'LOAD_GLOBAL' and \
                        instructions[k].argval in ('int', 'float'):
                         return 0
-                continue  # keep scanning past non-int/float CALL opcodes
+                continue
             elif instr.opname in ('LIST_APPEND', 'STORE_SUBSCR'):
                 return None
             elif instr.opname in TERMINATOR_OPCODES:
@@ -505,8 +505,6 @@ def _index_bound_spec(frame):
         return None
     idx_instr = instructions.index(tgt)
 
-    # ── Case 1: list[const_int]  e.g. parts[5]
-    # Pattern: LOAD_FAST <list>  LOAD_CONST <int>  BINARY_SUBSCR
     if (idx_instr >= 2
             and instructions[idx_instr - 1].opname == 'LOAD_CONST'
             and isinstance(instructions[idx_instr - 1].argval, int)
@@ -516,7 +514,6 @@ def _index_bound_spec(frame):
         default = _infer_subscript_default(instructions, idx_instr)
         return PatchSpec('list_bound_guard', list_var, default, key_name=(const_idx,))
 
-    # ── Case 2: multi-level chain with LOAD_CONST keys  e.g. data['key'][i]
     if idx_instr > 0 and instructions[idx_instr - 1].opname == 'LOAD_CONST':
         chain = []
         pos = idx_instr
@@ -538,8 +535,6 @@ def _index_bound_spec(frame):
                 key_name=tuple(chain),
             )
 
-    # ── Case 3: list[idx_var]  e.g. parts[i]  — both operands are LOAD_FAST
-    # Scan backward from BINARY_SUBSCR to find list_var and idx_var
     load_fasts = []
     for i in range(idx_instr - 1, -1, -1):
         if instructions[i].opname in ('LOAD_FAST', 'LOAD_DEREF'):
@@ -547,7 +542,7 @@ def _index_bound_spec(frame):
             if len(load_fasts) == 2:
                 break
     if len(load_fasts) < 2:
-        # Only one LOAD_FAST found — try chain subscript path
+
         chain = []
         pos = idx_instr
         while pos >= 2 and instructions[pos].opname in SUBSCRIPT_OPCODES:
@@ -571,11 +566,10 @@ def _index_bound_spec(frame):
             _infer_subscript_default(instructions, idx_instr),
             key_name=tuple(chain),
         )
-    # load_fasts[0] = idx_var (the variable used as index), [1] = list_var
+
     list_var, idx_var = load_fasts[1], load_fasts[0]
     inferred_default = _infer_default(idx_var, instructions, idx_instr)
     return PatchSpec('index_guard', idx_var, inferred_default, list_len_var=list_var)
-
 
 def _dict_get_spec(frame, msg):
     match = re.search(r"KeyError\: '(\w+)'", msg)

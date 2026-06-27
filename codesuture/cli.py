@@ -3,7 +3,6 @@ import io
 import argparse
 from codesuture.tracer import install, uninstall, _install_trace_on_all_threads
 
-
 def _ensure_utf8_stdout():
     """Reconfigure stdout/stderr to handle Unicode on Windows (cp1252).
 
@@ -15,14 +14,14 @@ def _ensure_utf8_stdout():
     """
     for stream_name in ('stdout', 'stderr'):
         stream = getattr(sys, stream_name)
-        # Layer 1: reconfigure if supported
+
         if hasattr(stream, 'reconfigure'):
             try:
                 stream.reconfigure(encoding='utf-8', errors='replace')
-                continue  # Success — encoding changed, move to next stream
+                continue
             except Exception:
                 pass
-        # Layer 2: wrap the raw buffer directly
+
         if hasattr(stream, 'buffer'):
             try:
                 wrapped = io.TextIOWrapper(
@@ -34,8 +33,7 @@ def _ensure_utf8_stdout():
                 )
                 setattr(sys, stream_name, wrapped)
             except Exception:
-                pass  # Can't fix it — best effort
-
+                pass
 
 def main():
     _ensure_utf8_stdout()
@@ -78,7 +76,6 @@ def main():
     explain_parser = sub.add_parser('explain', help='Show detailed explanation of active patches')
     explain_parser.add_argument('func_name', nargs='?', default=None, help='Function name to explain')
 
-    # --- Phase 3: Incident Intelligence ---
     inc_parser = sub.add_parser('incidents', help='Show incident log')
     inc_parser.add_argument('--since', metavar='PERIOD', default='1d',
                             help='Time window as number of days, e.g. 1d, 2d, 7d, 30d (default: 1d)')
@@ -92,7 +89,6 @@ def main():
     digest_parser.add_argument('--weekly', action='store_true', help='Generate weekly digest instead of daily')
     digest_parser.add_argument('--export', metavar='FILE', help='Export digest to file')
 
-    # --- Phase 4: Alert System ---
     alert_parser = sub.add_parser('alerts', help='Manage alerts')
     alert_sub = alert_parser.add_subparsers(dest='alert_action')
     alert_sub.add_parser('show', help='Show unread alerts (default)')
@@ -103,7 +99,6 @@ def main():
     alert_sub.add_parser('config', help='Show current alert configuration')
     alert_sub.add_parser('test', help='Send a test alert to verify channels')
 
-    # --- Phase 5: Fix Suggestions ---
     suggest_parser = sub.add_parser('suggest', help='Show fix suggestions for active patches')
     suggest_parser.add_argument('func_name', nargs='?', default=None,
                                 help='Function name to show suggestion for')
@@ -112,7 +107,6 @@ def main():
     suggest_parser.add_argument('--json', action='store_true', dest='suggest_json',
                                 help='Output suggestions as JSON')
 
-    # --- Phase 8: Lifecycle & Metrics ---
     lifecycle_parser = sub.add_parser('lifecycle', help='Manage patch lifecycle')
     lifecycle_sub = lifecycle_parser.add_subparsers(dest='lifecycle_action')
     lifecycle_sub.add_parser('show', help='Show all patch lifecycle states')
@@ -126,7 +120,6 @@ def main():
     metrics_parser.add_argument('--format', choices=['prometheus', 'json'], default='prometheus',
                                 dest='metrics_format', help='Output format')
 
-    # --- v2: Rewind Crash Forensics ---
     rewind_parser = sub.add_parser('rewind', help='View crash forensics timelines')
     rewind_parser.add_argument('func_name', nargs='?', default=None,
                                help='Function name to show rewind timeline for')
@@ -255,7 +248,6 @@ def main():
             if tracer is not None:
                 tracer.report()
 
-
 def _parse_since(since_str: str):
     """Parse '1d', '7d', '30d' into a datetime."""
     from datetime import datetime, timezone, timedelta
@@ -268,7 +260,6 @@ def _parse_since(since_str: str):
     else:
         days = 1
     return datetime.now(timezone.utc) - timedelta(days=days)
-
 
 def _handle_incidents(args):
     """Handle the 'incidents' command."""
@@ -296,7 +287,6 @@ def _handle_incidents(args):
             print(_json.dumps(inc.to_dict(), default=str))
         return
 
-    # Table output
     print()
     print(f"  CodeSuture Incidents (since {since.strftime('%Y-%m-%d %H:%M')} UTC)")
     print()
@@ -318,7 +308,6 @@ def _handle_incidents(args):
         print(f"  Breakdown: {' | '.join(parts)}")
     print()
 
-
 def _handle_digest(args):
     """Handle the 'digest' command."""
     from codesuture.incidents.incident_log import IncidentLogger
@@ -338,7 +327,6 @@ def _handle_digest(args):
         print(f"[CodeSuture] Digest exported to {args.export}")
     else:
         print(content)
-
 
 def _handle_alerts(args):
     """Handle the 'alerts' command."""
@@ -416,7 +404,6 @@ def _handle_alerts(args):
         router.route(test_incident)
         print("[CodeSuture] Test alert sent. Check your configured channels.")
 
-
 def _handle_suggest(args):
     """Handle the 'suggest' command — show source-level fix suggestions."""
     import json as _json
@@ -425,7 +412,6 @@ def _handle_suggest(args):
 
     logger = IncidentLogger()
 
-    # Get recent incidents
     from datetime import datetime, timezone, timedelta
     since = datetime.now(timezone.utc) - timedelta(days=30)
     incidents = logger.get_incidents(since=since)
@@ -434,18 +420,16 @@ def _handle_suggest(args):
         print("[CodeSuture] No incidents found. Run a script first to generate incidents.")
         return
 
-    # Filter by function if specified
     if args.func_name:
         incidents = [i for i in incidents if args.func_name.lower() in i.function.lower()]
         if not incidents:
             print(f"[CodeSuture] No incidents found for '{args.func_name}'.")
             return
 
-    # Deduplicate by function+guard_type (show latest)
     seen = {}
     for inc in incidents:
         key = (inc.function, inc.guard_type)
-        seen[key] = inc  # Keep last occurrence
+        seen[key] = inc
     unique_incidents = list(seen.values())
 
     suggestions = []
@@ -480,7 +464,6 @@ def _handle_suggest(args):
             print()
         return
 
-    # Default: formatted output
     print()
     print(f"  CodeSuture Fix Suggestions ({len(suggestions)} found)")
     print()
@@ -500,7 +483,6 @@ def _handle_suggest(args):
     print(f"  Run 'codesuture suggest --diff' for unified diffs.")
     print(f"  Run 'codesuture suggest <func_name>' for a specific function.")
     print()
-
 
 def _handle_lifecycle(args):
     """Handle the 'lifecycle' command — manage patch lifecycle states."""
@@ -558,7 +540,6 @@ def _handle_lifecycle(args):
             print(f"[CodeSuture] No patches found for '{func}'.")
         return
 
-    # Default: show all
     all_patches = mgr.get_all()
     if not all_patches:
         print("[CodeSuture] No patch lifecycle data. Run a script to generate patches.")
@@ -573,7 +554,6 @@ def _handle_lifecycle(args):
         print(f"  {icon} {p.function_name}() — {p.guard_type} — {p.current_state.value} ({transitions} transitions, {p.age_days()}d)")
     print()
 
-
 def _handle_metrics(args):
     """Handle the 'metrics' command — export metrics."""
     from codesuture.metrics import MetricsCollector
@@ -586,17 +566,14 @@ def _handle_metrics(args):
     else:
         print(collector.export_prometheus())
 
-
 if __name__ == '__main__':
     main()
-
 
 def _handle_rewind(args):
     """Handle the 'rewind' command — view crash forensics timelines."""
     import json as _json
     from codesuture.rewind.persistence import load_latest_rewind, list_rewind_dumps
 
-    # List all saved rewind dumps
     if getattr(args, 'list_dumps', False):
         dumps = list_rewind_dumps()
         if not dumps:
@@ -609,7 +586,6 @@ def _handle_rewind(args):
         print()
         return
 
-    # Load specific function or latest
     func_name = getattr(args, 'func_name', None)
     use_last = getattr(args, 'last', False)
 
@@ -618,7 +594,7 @@ def _handle_rewind(args):
     elif use_last:
         data = load_latest_rewind()
     else:
-        # Default: show latest
+
         data = load_latest_rewind()
 
     if data is None:
@@ -628,19 +604,16 @@ def _handle_rewind(args):
         print("[CodeSuture Rewind] Run with --rewind flag: codesuture run --rewind <script>")
         return
 
-    # JSON output
     if getattr(args, 'rewind_json', False):
         print(_json.dumps(data, indent=2, default=str))
         return
 
-    # Human-readable output
     from codesuture.rewind.formatter import format_rewind_timeline
     from codesuture.rewind.buffer import FrameSnapshot
 
     timeline = data.get('timeline', [])
     crash_info = data.get('crash_info', {})
 
-    # Convert dicts back to FrameSnapshot objects for the formatter
     snapshots = []
     for item in timeline:
         try:
@@ -662,7 +635,6 @@ def _handle_rewind(args):
         print("[CodeSuture Rewind] Timeline is empty.")
         return
 
-    # Print header with crash info
     func_display = data.get('function', '?')
     print(f"\n[CodeSuture Rewind] Last crash timeline for {func_display}()")
 

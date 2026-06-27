@@ -9,7 +9,7 @@ CONFIG_FILE = '.codesuture.toml'
 class WebhookConfig:
     enabled: bool = False
     url: str = ''
-    format: str = 'raw'  # 'slack', 'discord', 'teams', 'raw'
+    format: str = 'raw'
     headers: Dict[str, str] = field(default_factory=dict)
 
 @dataclass  

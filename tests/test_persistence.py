@@ -14,14 +14,8 @@ from codesuture.persistence import (
     _load_cached_code,
 )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _dummy():
     return 42
-
 
 def _make_func_with_spec():
     """Return a (func, code_obj, spec-like) triple ready for save_patch."""
@@ -36,11 +30,6 @@ def _make_func_with_spec():
     )
     return func, code_obj, spec
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture()
 def clean_store(tmp_path, monkeypatch):
     """Run every test inside a fresh temp directory so that
@@ -50,11 +39,6 @@ def clean_store(tmp_path, monkeypatch):
     store = tmp_path / CACHE_DIR
     if store.exists():
         shutil.rmtree(store)
-
-
-# ---------------------------------------------------------------------------
-# save_patch
-# ---------------------------------------------------------------------------
 
 class TestSavePatch:
     def test_creates_code_and_json(self, clean_store):
@@ -79,7 +63,6 @@ class TestSavePatch:
         orig_path = clean_store / CACHE_DIR / f"{base}.orig.code"
         assert orig_path.exists(), ".orig.code file should be created"
 
-        # Verify the marshalled content round-trips
         with open(orig_path, "rb") as f:
             loaded = marshal.load(f)
         assert loaded.co_name == func.__code__.co_name
@@ -97,7 +80,7 @@ class TestSavePatch:
 
         assert "code_sha256" in metadata
         assert isinstance(metadata["code_sha256"], str)
-        assert len(metadata["code_sha256"]) == 64  # SHA-256 hex digest
+        assert len(metadata["code_sha256"]) == 64
 
     def test_json_metadata_fields(self, clean_store):
         func, code_obj, spec = _make_func_with_spec()
@@ -134,7 +117,6 @@ class TestSavePatch:
         """save_patch returns early when func has no __module__."""
         func, code_obj, spec = _make_func_with_spec()
 
-        # Create a wrapper that has no __module__
         class FakeFunc:
             __qualname__ = "fakefunc"
             __name__ = "fakefunc"
@@ -145,10 +127,7 @@ class TestSavePatch:
         store = clean_store / CACHE_DIR
         assert not store.exists() or len(list(store.iterdir())) == 0
 
-
-# ---------------------------------------------------------------------------
 # _load_cached_code
-# ---------------------------------------------------------------------------
 
 class TestLoadCachedCode:
     def test_loads_valid_code(self, clean_store):
@@ -173,7 +152,6 @@ class TestLoadCachedCode:
         base = f"{func.__module__}.{func_name}"
         code_path = clean_store / CACHE_DIR / f"{base}.code"
 
-        # Tamper with the .code file by appending garbage bytes
         with open(code_path, "ab") as f:
             f.write(b"\x00\xff\xfe\xfd")
 
@@ -197,5 +175,5 @@ class TestLoadCachedCode:
 
         loaded = _load_cached_code(func.__module__, func_name)
         captured = capsys.readouterr()
-        # Legacy patch — no hash to verify, but should still load
+
         assert "Legacy patch" in captured.out or loaded is not None

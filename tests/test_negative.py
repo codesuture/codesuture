@@ -11,7 +11,6 @@ import pytest
 from codesuture.tracer import CodeSutureTracer
 from codesuture.pattern_matcher import analyze_exception
 
-
 class TestUnsupportedExceptions:
     """Exceptions that should NOT be patched."""
 
@@ -28,7 +27,7 @@ class TestUnsupportedExceptions:
             while inner.tb_next:
                 inner = inner.tb_next
             spec = analyze_exception(inner.tb_frame, type(e), e, inner)
-            assert spec is None  # No guard for SystemExit
+            assert spec is None
 
     def test_stopiteration_not_patched(self):
         """StopIteration is flow control, not a bug."""
@@ -61,11 +60,9 @@ class TestUnsupportedExceptions:
             while inner.tb_next:
                 inner = inner.tb_next
             spec = analyze_exception(inner.tb_frame, type(e), e, inner)
-            # FileNotFoundError has no guard strategy today.
-            # If someone adds one (e.g. file_guard), this test becomes
+
             # the canary — it will fail and force a conscious decision.
             assert spec is None
-
 
 class TestTracerEdgeCases:
     """Tracer internals handle edge cases correctly."""
@@ -77,7 +74,7 @@ class TestTracerEdgeCases:
         exc_id = id(exc)
         tracer._handled_exc_ids.add(exc_id)
         assert exc_id in tracer._handled_exc_ids
-        # Adding again doesn't raise
+
         tracer._handled_exc_ids.add(exc_id)
         assert len([x for x in tracer._handled_exc_ids if x == exc_id]) == 1
 
@@ -86,7 +83,7 @@ class TestTracerEdgeCases:
         tracer = CodeSutureTracer(max_retries=2, silent=True)
         key = (12345, 0)
         tracer.attempts[key] = 0
-        assert tracer.attempts[key] < tracer.max_retries  # First try OK
+        assert tracer.attempts[key] < tracer.max_retries
         tracer.attempts[key] = 2
         assert tracer.attempts[key] >= tracer.max_retries  # Now blocked
 
@@ -116,13 +113,13 @@ class TestTracerEdgeCases:
 
         found_depth = [None]
         def worker():
-            # New thread should not see depth=5
+
             found_depth[0] = getattr(tracer._thread_state, 'depth', None)
 
         t = threading.Thread(target=worker)
         t.start()
         t.join()
-        assert found_depth[0] is None  # Thread-local is isolated
+        assert found_depth[0] is None
 
     def test_stats_keys_exist(self):
         """All expected stats keys are initialized."""

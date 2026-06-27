@@ -27,7 +27,7 @@ def test_index_guard_synthesis():
     new_func = types.FunctionType(new_code, {'len': len})
 
     assert new_func([10, 20], 1) == 20
-    assert new_func([10, 20], 5) == 0  # returns default, NOT items[0]
+    assert new_func([10, 20], 5) == 0
 
 def test_type_coercion_guard_synthesis():
 

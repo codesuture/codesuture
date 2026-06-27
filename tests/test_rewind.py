@@ -9,11 +9,6 @@ from codesuture.rewind.buffer import RewindBuffer, FrameSnapshot
 from codesuture.rewind.formatter import format_rewind_timeline
 from codesuture.rewind.persistence import save_rewind_dump, load_latest_rewind, list_rewind_dumps
 
-
-# ──────────────────────────────────────────────
-# RewindBuffer tests
-# ──────────────────────────────────────────────
-
 class TestRewindBuffer:
     def test_basic_record_and_dump(self):
         buf = RewindBuffer(max_frames=10, max_age_seconds=60.0)
@@ -46,14 +41,14 @@ class TestRewindBuffer:
             ))
         assert len(buf) == 5
         result = buf.dump()
-        # Should have the last 5
+
         assert result[0].function == 'func_5'
         assert result[-1].function == 'func_9'
 
     def test_age_eviction(self):
         buf = RewindBuffer(max_frames=100, max_age_seconds=0.1)
         buf.record(FrameSnapshot(
-            timestamp=time.monotonic() - 1.0,  # 1 second ago, older than 0.1s
+            timestamp=time.monotonic() - 1.0,
             event='call',
             function='old_func',
             module='mod',
@@ -131,7 +126,7 @@ class TestRewindBuffer:
 
         assert not errors, f"Thread safety errors: {errors}"
         result = buf.dump(last_n=1000)
-        assert len(result) == 500  # 5 threads × 100 events
+        assert len(result) == 500
 
     def test_clear(self):
         buf = RewindBuffer(max_frames=10)
@@ -165,11 +160,6 @@ class TestRewindBuffer:
         assert d['function'] == 'crash_here'
         assert d['exception'] == 'AttributeError: NoneType has no attribute bio'
         assert d['args'] == {'user_id': '42'}
-
-
-# ──────────────────────────────────────────────
-# Formatter tests
-# ──────────────────────────────────────────────
 
 class TestRewindFormatter:
     def test_empty_snapshots(self):
@@ -242,15 +232,10 @@ class TestRewindFormatter:
         result = format_rewind_timeline(snapshots, crash_time=now)
         assert '-1.000s' in result
 
-
-# ──────────────────────────────────────────────
-# Persistence tests
-# ──────────────────────────────────────────────
-
 class TestRewindPersistence:
     def test_save_and_load(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        # Monkey-patch REWIND_DIR to use tmp
+
         import codesuture.rewind.persistence as rp
         monkeypatch.setattr(rp, 'REWIND_DIR', str(tmp_path / '.codesuture_rewind'))
 
@@ -278,7 +263,6 @@ class TestRewindPersistence:
         filepath = save_rewind_dump('my_func', snapshots, crash_info={'exception_type': 'TypeError'})
         assert os.path.exists(filepath)
 
-        # Load it back
         data = load_latest_rewind('my_func')
         assert data is not None
         assert data['function'] == 'my_func'
@@ -310,11 +294,6 @@ class TestRewindPersistence:
         monkeypatch.setattr(rp, 'REWIND_DIR', str(tmp_path / 'nonexistent'))
         result = list_rewind_dumps()
         assert result == []
-
-
-# ──────────────────────────────────────────────
-# Tracer integration tests
-# ──────────────────────────────────────────────
 
 class TestRewindTracer:
     def test_safe_repr_normal(self):
@@ -352,7 +331,6 @@ class TestRewindTracer:
         from codesuture.rewind.tracer import _should_skip_frame
         import types
 
-        # Create a fake frame-like object
         class FakeFrame:
             def __init__(self, module_name):
                 self.f_globals = {'__name__': module_name}

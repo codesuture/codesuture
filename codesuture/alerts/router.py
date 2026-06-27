@@ -10,16 +10,14 @@ from codesuture.alerts.channels.webhook_channel import WebhookChannel
 
 _log = logging.getLogger(__name__)
 
-
 class AlertRouter:
     def __init__(self, config: AlertConfig = None):
         self.config = config or load_config()
         self._lock = threading.Lock()
         self._batch_buffer: List[IncidentRecord] = []
         self._batch_timer: Optional[threading.Timer] = None
-        self._escalation_tracker: dict = defaultdict(list)  # func -> [timestamps]
+        self._escalation_tracker: dict = defaultdict(list)
 
-        # Initialize channels
         self._file_channel = None
         self._webhook_channel = None
 
@@ -37,7 +35,6 @@ class AlertRouter:
         if not self.config.enabled:
             return
 
-        # Check for escalation
         self._check_escalation(incident)
 
         severity = incident.severity.value
@@ -48,7 +45,6 @@ class AlertRouter:
         if 'webhook' in channels:
             self._send_webhook_alert(incident)
 
-        # HIGH severity gets batched
         if severity == 'HIGH' and 'file' not in channels:
             self._add_to_batch(incident)
 
@@ -70,7 +66,7 @@ class AlertRouter:
         with self._lock:
             self._batch_buffer.append(incident)
             if self._batch_timer is None:
-                self._batch_timer = threading.Timer(900.0, self._flush_batch)  # 15 min
+                self._batch_timer = threading.Timer(900.0, self._flush_batch)
                 self._batch_timer.daemon = True
                 self._batch_timer.start()
 
@@ -96,7 +92,7 @@ class AlertRouter:
         with self._lock:
             timestamps = self._escalation_tracker[func]
             timestamps.append(now)
-            # Prune old timestamps
+
             cutoff = now - window
             timestamps[:] = [t for t in timestamps if t > cutoff]
 

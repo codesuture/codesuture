@@ -5,7 +5,6 @@ import json
 import pytest
 from codesuture.middleware import CodeSutureMiddleware
 
-
 def _make_environ(method='GET', path='/'):
     """Create a minimal WSGI environ dict."""
     return {
@@ -16,7 +15,6 @@ def _make_environ(method='GET', path='/'):
         'wsgi.input': io.BytesIO(b''),
         'wsgi.errors': io.BytesIO(),
     }
-
 
 class TestCodeSutureMiddleware:
 
@@ -42,7 +40,7 @@ class TestCodeSutureMiddleware:
         def app(environ, start_response):
             call_count[0] += 1
             data = None
-            bio = data.strip()  # Crash on first call
+            bio = data.strip()
             start_response('200 OK', [('Content-Type', 'text/plain')])
             return [bio.encode()]
 
@@ -54,13 +52,13 @@ class TestCodeSutureMiddleware:
         # This should either replay or return patched response
         try:
             result = mw(_make_environ(), start_response)
-            # If replay works, we get a response with X-CodeSuture header
+
             if responses:
                 headers = responses[-1][1]
                 if 'X-CodeSuture' in headers:
                     assert 'patched=1' in headers['X-CodeSuture']
         except AttributeError:
-            # If patch+replay didn't work, it's still a valid test path
+
             pass
 
     def test_middleware_doesnt_crash_on_non_patchable(self):
