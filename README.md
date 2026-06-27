@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="assets/demo.gif" alt="CodeSuture healing a live crash" width="100%">
-</p>
-
 <h1 align="center">CodeSuture</h1>
 
 <p align="center">
@@ -11,7 +7,7 @@
 <p align="center">
   <a href="https://pypi.org/project/codesuture/"><img src="https://img.shields.io/pypi/v/codesuture?style=for-the-badge&color=0d6efd" alt="PyPI"></a>
   <a href="https://pypi.org/project/codesuture/"><img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-10b981?style=for-the-badge" alt="Python"></a>
-  <a href="LINK_TO_CI"><img src="https://img.shields.io/badge/tests-416%20passing-10b981?style=for-the-badge" alt="Tests"></a>
+  <a href="LINK_TO_CI"><img src="https://img.shields.io/badge/tests-436%20passing-10b981?style=for-the-badge" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6366f1?style=for-the-badge" alt="License"></a>
 </p>
 
@@ -56,6 +52,10 @@ $ codesuture suggest
 ```
 
 **No decorators. No source file changes. No restart.**
+
+<p align="center">
+  <img src="assets/codesuture.webp" alt="CodeSuture healing a live crash" width="100%">
+</p>
 
 ---
 
