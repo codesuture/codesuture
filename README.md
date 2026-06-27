@@ -20,7 +20,7 @@
 ## 30 seconds, zero code changes
 
 ```bash
-codesuture run your_app.py
+codesuture run your_server.py
 ```
 
 ```
